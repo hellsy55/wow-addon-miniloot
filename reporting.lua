@@ -7,6 +7,9 @@ local ProcessChatMessage = ns.Messages.ProcessChatMessage
 local EvaluateFilters = ns.Filters.EvaluateFilters
 local TableContains = ns.Utils.TableContains
 
+local AddMessageEventFilter = ChatFrame_AddMessageEventFilter or ChatFrameUtil.AddMessageEventFilter ---@type fun(event: WowEvent, callback: fun())
+local RemoveMessageEventFilter = ChatFrame_RemoveMessageEventFilter or ChatFrameUtil.RemoveMessageEventFilter  ---@type fun(event: WowEvent, callback: fun())
+
 ---@type MiniLootNSEventCallbackResult
 local ProcessChatEvent
 
@@ -59,7 +62,7 @@ local function RegisterChatEvents(onChatEvent)
     local numEvents = #MessageEvents
     for i = numEvents, 1, -1 do
         local event = MessageEvents[i]
-        local success = pcall(ChatFrame_AddMessageEventFilter, event, onChatEvent)
+        local success = pcall(AddMessageEventFilter, event, onChatEvent)
         if not success then
             table.remove(MessageEvents, i)
         end
@@ -71,7 +74,7 @@ local function UnregisterChatEvents(onChatEvent)
     local numEvents = #MessageEvents
     for i = numEvents, 1, -1 do
         local event = MessageEvents[i]
-        local success = pcall(ChatFrame_RemoveMessageEventFilter, event, onChatEvent)
+        local success = pcall(RemoveMessageEventFilter, event, onChatEvent)
         if not success then
             table.remove(MessageEvents, i)
         end

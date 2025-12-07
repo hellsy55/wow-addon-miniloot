@@ -2247,6 +2247,16 @@ local function ProcessMatchedToResult(messageFormat, matches)
 end
 
 ---@param event WowEvent
+local function IsChatEventRelevant(event)
+    for _, message in ipairs(MessagesCollection) do
+        if TableContains(message.events, event) then
+            return true
+        end
+    end
+    return false
+end
+
+---@param event WowEvent
 ---@param text string
 ---@param playerName? string
 ---@param languageName? string
@@ -2427,6 +2437,7 @@ RunMessageTests()
 ns.Messages = {
     MiniLootMessageGroup = MiniLootMessageGroup,
     MessagesCollection = MessagesCollection,
+    IsChatEventRelevant = IsChatEventRelevant,
     ProcessChatMessage = ProcessChatMessage,
     CreateChatMessageGenerator = CreateChatMessageGenerator,
 }

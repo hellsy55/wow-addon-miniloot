@@ -12,7 +12,8 @@
         "utf8": "disable"
     },
     "Lua.workspace.library": [
-        "~\\.vscode\\extensions\\ketho.wow-api-0.20.8\\Annotations\\Core"
+        "./",
+        "~\\.vscode\\extensions\\ketho.wow-api-0.21.0\\Annotations\\Core"
     ],
     "Lua.diagnostics.globals": [
         "ACTION_SWING",
@@ -20,6 +21,7 @@
         "BattlePetToolTip_Show",
         "ChatFrame_AddMessageEventFilter",
         "ChatFrame_RemoveMessageEventFilter",
+        "ChatFrameUtil",
         "COMBATLOG_UNKNOWN_UNIT",
         "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED",
         "COPPER_AMOUNT",
@@ -61,6 +63,11 @@
         "TRANSMOGRIFY_TOOLTIP_APPEARANCE_UNKNOWN",
         "XP",
         "YOU",
-        "YOU_LOOT_MONEY"
+        "YOU_LOOT_MONEY",
+        "GetUnitName",
+        "Add"
+    ],
+    "Lua.diagnostics.disable": [
+        "assign-type-mismatch"
     ]
 }

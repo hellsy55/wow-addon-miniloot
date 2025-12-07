@@ -5,12 +5,14 @@ local addOnName = ... ---@type string
 local db = ns.Settings.db
 local GetChatFrame = ns.Settings.GetChatFrame
 local EventHandlers = ns.Reporting.EventHandlers
+local IsChatEventRelevant = ns.Messages.IsChatEventRelevant
 local ProcessChatEvent = ns.Reporting.ProcessChatEvent
 local RegisterEvents = ns.Reporting.RegisterEvents
 local UnregisterEvents = ns.Reporting.UnregisterEvents
 local RegisterChatEvents = ns.Reporting.RegisterChatEvents
 local UnregisterChatEvents = ns.Reporting.UnregisterChatEvents
 local CreateOutputHandler = ns.Output.CreateOutputHandler
+local ChattynatorUtil = ns.Utils.ChattynatorUtil
 local GetChatFrames = ns.Utils.GetChatFrames
 local EnableHyperlinks = ns.Tooltip.EnableHyperlinks
 local DisableHyperlinks = ns.Tooltip.DisableHyperlinks
@@ -55,6 +57,56 @@ local function OnChatEvent(chatFrame, event, ...)
     return false, ...
 end
 
+---@type ChattynatorChatFilter
+local function OnChattynatorChatEventFilter(data)
+    if not ChattynatorUtil:IsChatFrameActive(1) then
+        return
+    end
+    if not IsChatEventRelevant(data.typeInfo.event) then
+        return true
+    end
+    local _, _, hideChatIgnoreResult = ProcessChatEvent(data.typeInfo.event, data.text, data.recordedBy, "", "", data.recordedBy, "", 0, 0, "", 0, 0, "", 0, false, false, false, false)
+    if hideChatIgnoreResult then
+        return false
+    end
+    return true
+end
+
+---@type MiniLootChatFramePolyfill
+---@diagnostic disable-next-line: missing-fields
+local ChattynatorChatModifierFakeChatFrame = {}
+
+---@param data ChattynatorChatData
+local function WrapChattynatorChatModifierWithFakeChatFrame(data)
+    ChattynatorChatModifierFakeChatFrame.AddMessage = function(_, line, r, g, b)
+        data.text = line
+        data.color.r, data.color.g, data.color.b = r, g, b
+    end
+    return ChattynatorChatModifierFakeChatFrame
+end
+
+---@type ChattynatorChatModifier
+local function OnChattynatorChatEventModifier(data)
+    if not ChattynatorUtil:IsChatFrameActive(1) then
+        return
+    end
+    if not IsChatEventRelevant(data.typeInfo.event) then
+        return
+    end
+    local result, message, hideChatIgnoreResult = ProcessChatEvent(data.typeInfo.event, data.text, data.recordedBy, "", "", data.recordedBy, "", 0, 0, "", 0, 0, "", 0, false, false, false, false)
+    if hideChatIgnoreResult then
+        return
+    end
+    if not result or not message then
+        return
+    end
+    local origChatFrame = output.chatFrame
+    output.chatFrame = WrapChattynatorChatModifierWithFakeChatFrame(data)
+    output:Add({ result = result, message = message })
+    output:Flush(message.group)
+    output.chatFrame = origChatFrame
+end
+
 ---@param event WowEvent
 ---@param ... any
 function frame:OnEvent(event, ...)
@@ -96,7 +148,12 @@ function frame:Enable()
     end
     self.isEnabled = true
     RegisterEvents(frame)
-    RegisterChatEvents(OnChatEvent)
+    if ChattynatorUtil.Loaded then
+        ChattynatorUtil:AddFilter(OnChattynatorChatEventFilter)
+        ChattynatorUtil:AddModifier(OnChattynatorChatEventModifier)
+    else
+        RegisterChatEvents(OnChatEvent)
+    end
 end
 
 function frame:Disable()
@@ -105,7 +162,12 @@ function frame:Disable()
     end
     self.isEnabled = false
     UnregisterEvents(frame)
-    UnregisterChatEvents(OnChatEvent)
+    if ChattynatorUtil.Loaded then
+        ChattynatorUtil:RemoveFilter(OnChattynatorChatEventFilter)
+        ChattynatorUtil:RemoveModifier(OnChattynatorChatEventModifier)
+    else
+        UnregisterChatEvents(OnChatEvent)
+    end
 end
 
 ---@param forceUpdate? boolean

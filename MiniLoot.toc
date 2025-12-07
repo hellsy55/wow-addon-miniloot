@@ -1,4 +1,4 @@
-## Interface: 110107
+## Interface: 110107, 120000
 ## IconTexture: 2056011
 ## Title: MiniLoot
 ## Notes: Reduces chat related spam by a whole deal!

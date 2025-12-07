@@ -68,6 +68,127 @@ do
 
 end
 
+---@type ChattynatorUtil
+local ChattynatorUtil do
+
+    ---@class ChattynatorUtil
+    ChattynatorUtil = {}
+
+    ---@class Chattynator
+    ---@field public API ChattynatorAPI
+
+    ---@class ChattynatorAPI
+    ---@field public GetHyperlinkHandler fun(): ChattynatorHyperlinkHandler
+    ---@field public GetWindowsAndTabs fun(): table<number, table<number, string>>
+    ---@field public AddFilter fun(filter: ChattynatorChatFilter, winIndex: number, tabIndex: number)
+    ---@field public RemoveFilter fun(filter: ChattynatorChatFilter, winIndex: number, tabIndex: number)
+    ---@field public AddModifier fun(modifier: ChattynatorChatModifier)
+    ---@field public RemoveModifier fun(modifier: ChattynatorChatModifier)
+
+    ---@class ChattynatorChatData
+    ---@field public timestamp number
+    ---@field public id string
+    ---@field public recordedBy string `Name-Realm`
+    ---@field public text string
+    ---@field public color { r: number, g: number, b: number }
+    ---@field public typeInfo { event: WowEvent, type: string }
+
+    ---@alias ChattynatorChatFilter fun(data: ChattynatorChatData): showMessage: boolean?
+
+    ---@alias ChattynatorChatModifier fun(data: ChattynatorChatData)
+
+    ---@class ChattynatorHyperlinkHandler
+    ---@field public GetChildren fun(): ...: ChattynatorChatFrame
+
+    ---@class ChattynatorChatFrame : Frame
+    ---@field public tabIndex number
+    ---@field public ScrollingMessages ChattynatorChatFrameScrollingMessages
+
+    ---@class ChattynatorChatFrameScrollingMessages : Frame
+
+    function ChattynatorUtil:GetChattynatorAPI()
+        ---@type Chattynator?
+        local chattynator = Chattynator ---@diagnostic disable-line: undefined-global
+        if type(chattynator) ~= "table" or type(chattynator.API) ~= "table" or type(chattynator.API.GetHyperlinkHandler) ~= "function" then
+            return
+        end
+        return chattynator.API
+    end
+
+    function ChattynatorUtil:GetChattynatorHandler()
+        local api = self:GetChattynatorAPI()
+        if not api then
+            return
+        end
+        return api.GetHyperlinkHandler()
+    end
+
+    ---@param chattynatorHandler? ChattynatorHyperlinkHandler
+    function ChattynatorUtil:GetChattynatorChatFrame(chattynatorHandler)
+        if not chattynatorHandler then
+            chattynatorHandler = self:GetChattynatorHandler()
+        end
+        if not chattynatorHandler then
+            return
+        end
+        for _, frame in pairs({chattynatorHandler:GetChildren()}) do
+            if type(frame.ScrollingMessages) == "table" then
+                return frame, chattynatorHandler
+            end
+        end
+    end
+
+    ---@param tabIndex number
+    function ChattynatorUtil:IsChatFrameActive(tabIndex)
+        local chatFrame = self:GetChattynatorChatFrame()
+        if not chatFrame then
+            return
+        end
+        return chatFrame.tabIndex == tabIndex
+    end
+
+    ---@param filter ChattynatorChatFilter
+    function ChattynatorUtil:AddFilter(filter)
+        local api = self:GetChattynatorAPI()
+        if not api then
+            return
+        end
+        api.AddFilter(filter, 1, 1)
+    end
+
+    ---@param filter ChattynatorChatFilter
+    function ChattynatorUtil:RemoveFilter(filter)
+        local api = self:GetChattynatorAPI()
+        if not api then
+            return
+        end
+        api.RemoveFilter(filter, 1, 1)
+    end
+
+    ---@param modifier ChattynatorChatModifier
+    function ChattynatorUtil:AddModifier(modifier)
+        local api = self:GetChattynatorAPI()
+        if not api then
+            return
+        end
+        api.AddModifier(modifier)
+    end
+
+    ---@param modifier ChattynatorChatModifier
+    function ChattynatorUtil:RemoveModifier(modifier)
+        local api = self:GetChattynatorAPI()
+        if not api then
+            return
+        end
+        api.RemoveModifier(modifier)
+    end
+
+    ChattynatorUtil.Loaded = ChattynatorUtil:GetChattynatorAPI() ~= nil
+
+    ChattynatorUtil.Loaded = false -- TODO: WIP
+
+end
+
 ---@generic T
 ---@param tbl T[]
 ---@param shallow? boolean
@@ -962,6 +1083,7 @@ end
 ns.Utils = {
     ProjectVariant = ProjectVariant,
     SimpleHexColors = SimpleHexColors,
+    ChattynatorUtil = ChattynatorUtil,
     TableCopy = TableCopy,
     TableContains = TableContains,
     TableCombine = TableCombine,
