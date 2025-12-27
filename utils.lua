@@ -185,7 +185,7 @@ local ChattynatorUtil do
 
     ChattynatorUtil.Loaded = ChattynatorUtil:GetChattynatorAPI() ~= nil
 
-    ChattynatorUtil.Loaded = false -- TODO: WIP
+    ChattynatorUtil.Loaded = false -- TODO: WIP (need more testing with the latest changes)
 
 end
 
