@@ -319,6 +319,7 @@ local UIColor = {
 ---@field public SetEnabled_? fun(self: any, state: boolean?) `pre-11.0`
 
 ---@class SettingsControlDropDownOptionPolyfill
+---@field public controlType 1|2 `1` is Radio, `2` is Checkbox
 ---@field public label string
 ---@field public text string
 ---@field public value any
@@ -580,6 +581,7 @@ do
                 local value = data.Value or data.Label
                 text = text == nil and "" or tostring(text)
                 options[i] = {
+                    controlType = 1,
                     label = text,
                     text = text,
                     value = value,
@@ -922,6 +924,8 @@ do
         return widget
     end
 
+    -- TODO: WIP
+
 end
 
 ---@class MiniLootInterfacePanelWidgetTooltipCheckBox : MiniLootInterfacePanelWidget
@@ -944,6 +948,8 @@ do
         return widget
     end
 
+    -- TODO: WIP
+
 end
 
 ---@class MiniLootInterfacePanelWidgetFilters : MiniLootInterfacePanelWidget
@@ -965,6 +971,8 @@ do
         widget:OnLoad(panel, ...)
         return widget
     end
+
+    -- TODO: WIP
 
 end
 
