@@ -704,8 +704,8 @@ local function GetUnitMawPowerInfo(unit, query, fallback)
         return ---@diagnostic disable-line: missing-return-value
     end
     for i = 1, 100 do
-        local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, "MAW")
-        if not aura then
+        local success, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "MAW")
+        if not success or not aura then
             break
         end
         local spellTexture = aura.icon
