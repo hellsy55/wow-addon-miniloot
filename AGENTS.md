@@ -9,6 +9,27 @@ Recognize case-insensitive commands and close wording variants:
 - `install MiniLoot`, `instalar MiniLoot`, `instalar o addon`: read `.agents/skills/miniloot-install/SKILL.md`.
 - `implement PR <URL>`, `implementar PR <URL>`: read `.agents/skills/miniloot-implement-pr/SKILL.md`.
 
+Update commands and their equivalents authorize ONLY the Git synchronization workflow, never installation. After successful synchronization, including a complete no-op, ALWAYS present this exact Portuguese menu and STOP waiting for the user's response:
+
+```text
+a) instalar MiniLoot agora
+b) parar sem instalar
+```
+
+Only an explicit response choosing installation authorizes running `powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\jonat\Desktop\MiniLoot\atualizar-miniloot.ps1"`. Never infer installation authorization from update completion, a no-op, an updated origin/new-features, a completed commit/push, or remote ZIP availability. A direct, unequivocal installation request such as `install MiniLoot`, `instalar MiniLoot`, or `instalar o addon` is the sole exception: it authorizes installation without the menu.
+
+## Repository root and Git failure gate
+
+ALL project Git operations must explicitly target `C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot`. Never assume the Codex session's current working directory is the repository. For EVERY execution, either set that exact working directory or use `git -C "C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot" ...`. Never rely on a `cd` from an earlier execution.
+
+Before any Git workflow, run `git rev-parse --show-toplevel` against that explicit directory and verify that it resolves to the required repository root. This invariant applies to update and implement PR, including branch detection, status, diff, staging, commit, and push. Never operate in the parent directory.
+
+If this preflight fails (including "not a git repository") or returns another root, STOP the workflow. Any failed mandatory Git check, including status, branch detection, ancestry, fetch, or comparison, leaves the update PENDING, never completed or a no-op. Respect documented non-error exit codes such as ancestry exit 1. Do not continue dependent fetch, merge, or push operations after a failure. Do not show the installation menu or execute installation from a failed Git workflow. Git failures outside the repository followed by installer execution are explicitly forbidden.
+
+The update installation menu is reachable ONLY after ALL required Git synchronization succeeds, or a REAL no-op is proven by all required Git comparisons. On failure, report the update as PENDENTE in Portuguese without offering installation. The separate direct-install authorization exception above remains unchanged.
+
+Attempt authorized HTTPS fetch/push normally inside Codex; handle failures with useful diagnostics as their actual errors. If, after repository-root and local `http.sslBackend=openssl` validation, the operation instead exhibits the observed Codex HTTPS transport failure (`git-remote-https.exe` crash, exit 128 with empty stdout/stderr, or an equivalent transport failure), treat Codex HTTPS transport as unavailable for the REST of that workflow execution: no further HTTPS fetch/push inside Codex, including verification. Never retry in a loop, disable `sslVerify`, change `credential.helper` or global Git configuration, generate a token, or automatically switch to SSH. Preserve all local state and report remote synchronization/publication as PENDENTE. Give the exact failed Git operation with the explicit `git -C` repository path for normal PowerShell outside Codex, then STOP waiting for confirmation. After an external fetch, verify only with local read-only comparisons of the updated remote-tracking refs. After an external push, first check the corresponding local remote-tracking ref against the approved result; if insufficient, request the exact external fetch, wait for confirmation, and verify locally. GitHub Desktop is an option for origin push/fetch only when the equivalent operation is available in its interface; use the supplied PowerShell command for operations not clearly exposed, such as a specific upstream fetch. Never assume Desktop performed a different operation from the one confirmed. Confirmation without sufficient local Git evidence is not proof: remain PENDENTE without dependent integration, installation menu, or installation until verified. See the exact fallback commands in `.agents/skills/miniloot-update/references/branch-sync.md`.
+
 ## Branch invariants
 
 Origin: https://github.com/hellsy55/wow-addon-miniloot.git
@@ -34,4 +55,4 @@ Do routine work in the primary agent. Do not delegate status, fetch, fast-forwar
 
 Do not create AlterEgo library management: no `miniloot-libs`, `alterego-libs`, `scripts/check_lib_updates.py`, `.pkgmeta-lock.json`, `.pkgmeta-cache`, `check libs`, or `update with libs`. The existing `.pkgmeta` does not imply a vendored-library workflow.
 
-Report verified results compactly in Portuguese, aggregating healthy Git output. Explicitly state pending errors, choices, or conflicts. After a completed, approved update or PR publication, verify origin/new-features contains exactly the approved result before offering installation now or stopping without installation. Choosing installation authorizes execution without another confirmation.
+Report verified results compactly in Portuguese, aggregating healthy Git output. Explicitly state pending errors, choices, or conflicts. After a completed update (including a no-op) or approved PR publication, verify origin/new-features contains exactly the approved result, then present the exact installation menu above and STOP waiting for an explicit choice. Choosing installation authorizes execution without another confirmation.
