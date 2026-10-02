@@ -11,6 +11,8 @@ local RegisterEvents = ns.Reporting.RegisterEvents
 local UnregisterEvents = ns.Reporting.UnregisterEvents
 local RegisterChatEvents = ns.Reporting.RegisterChatEvents
 local UnregisterChatEvents = ns.Reporting.UnregisterChatEvents
+local EnsureLootRollHook = ns.Reporting.EnsureLootRollHook
+local SetSyntheticSelfRollHandler = ns.Reporting.SetSyntheticSelfRollHandler
 local CreateOutputHandler = ns.Output.CreateOutputHandler
 local ChattynatorUtil = ns.Utils.ChattynatorUtil
 local GetChatFrames = ns.Utils.GetChatFrames
@@ -40,6 +42,10 @@ local SetupUI = ns.UI.SetupUI
 local frame = CreateFrame("Frame")
 
 local output = CreateOutputHandler()
+
+SetSyntheticSelfRollHandler(function(result, message)
+    output:Add({ result = result, message = message })
+end)
 
 ---@type MiniLootNSEventChatEventCallback
 local function OnChatEvent(chatFrame, event, ...)
@@ -111,6 +117,7 @@ end
 ---@param ... any
 function frame:OnEvent(event, ...)
     if event == "ADDON_LOADED" then
+        EnsureLootRollHook()
         local name = ...
         if name == addOnName then
             self.isLoaded = true

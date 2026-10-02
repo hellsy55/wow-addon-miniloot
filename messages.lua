@@ -1388,9 +1388,11 @@ do
         ---|"Greed"
         ---|"YouNeed"
         ---|"Need"
+        ---|"YouTransmog"
         ---|"DisenchantRoll"
         ---|"GreedRoll"
         ---|"NeedRoll"
+        ---|"TransmogRoll"
         ---|"DisenchantCredit"
         ---|"YouDisenchantResult"
         ---|"DisenchantResult"
@@ -1398,6 +1400,8 @@ do
         ---|"GreedResult"
         ---|"YouNeedResult"
         ---|"NeedResult"
+        ---|"YouTransmogResult"
+        ---|"TransmogResult"
         ---|"IneligibleResult"
         ---|"LostResult"
         ---|"YouWinnerResult"
@@ -1421,7 +1425,7 @@ do
         ---@field public Name? string The name of the player. Relevant for `DisenchantCredit` and `IneligibleResult`.
 
         ---@class MiniLootMessageFormatSimpleParserResultLootRoll_LootRollYouDecide
-        ---@field public Type "YouPass"|"YouDisenchant"|"YouGreed"|"YouNeed"
+        ---@field public Type "YouPass"|"YouDisenchant"|"YouGreed"|"YouNeed"|"YouTransmog"
         ---@field public Link string The item link.
         ---@field public Value number Loot history ID.
         ---@field public ValueExtra? number Loot history ID.
@@ -1432,25 +1436,25 @@ do
         ---@field public Name string The name of the player.
 
         ---@class MiniLootMessageFormatSimpleParserResultLootRoll_LootRollRolled
-        ---@field public Type "DisenchantRoll"|"GreedRoll"|"NeedRoll"
+        ---@field public Type "DisenchantRoll"|"GreedRoll"|"NeedRoll"|"TransmogRoll"
         ---@field public Link string The item link.
         ---@field public Name string The name of the player.
         ---@field public Value number The number rolled.
 
         ---@class MiniLootMessageFormatSimpleParserResultLootRoll_LootRollYouResult
-        ---@field public Type "YouDisenchantResult"|"YouGreedResult"|"YouNeedResult"
+        ---@field public Type "YouDisenchantResult"|"YouGreedResult"|"YouNeedResult"|"YouTransmogResult"
         ---@field public Link string The item link.
         ---@field public Value number Loot history ID.
         ---@field public ValueExtra number The number rolled.
 
         -- Note that `YouWinnerResult` and `WinnerResult` only have `Link` and `Name` assigned.
         ---@class MiniLootMessageFormatSimpleParserResultLootRoll_LootRollResult
-        ---@field public Type "DisenchantResult"|"GreedResult"|"NeedResult"|"LostResult"|"YouWinnerResult"|"WinnerResult"
+        ---@field public Type "DisenchantResult"|"GreedResult"|"NeedResult"|"TransmogResult"|"LostResult"|"YouWinnerResult"|"WinnerResult"
         ---@field public Link string The item link.
         ---@field public Name string The name of the player.
         ---@field public Value number Loot history ID.
         ---@field public ValueExtra number The number rolled.
-        ---@field public NameExtraString? string The roll type like `Need` or `Greed`, etc.
+        ---@field public NameExtra? string The roll type like `Need`, `Greed`, or `Transmog`.
 
         ---@class MiniLootMessageFormatLootRoll : MiniLootMessageFormat
         ---@field public result? MiniLootMessageFormatSimpleParserResultLootRollArgs
@@ -1531,6 +1535,7 @@ do
                     {
                         formats = {
                             "LOOT_ROLL_NEED_SELF",
+                            "LOOT_ROLL_NEED_SELF_OFF_SPEC",
                         },
                         tokens = {
                             Tokens.ValueNumber,
@@ -1678,6 +1683,7 @@ do
                     {
                         formats = {
                             "LOOT_ROLL_YOU_WON_NO_SPAM_NEED",
+                            "LOOT_ROLL_YOU_WON_NO_SPAM_NEED_OFF_SPEC",
                         },
                         tokens = {
                             Tokens.ValueNumber,
@@ -1686,6 +1692,19 @@ do
                         },
                         result = {
                             Type = "YouNeedResult",
+                        },
+                    },
+                    {
+                        formats = {
+                            "LOOT_ROLL_YOU_WON_NO_SPAM_TRANSMOG",
+                        },
+                        tokens = {
+                            Tokens.ValueNumber,
+                            Tokens.ValueExtraNumber,
+                            Tokens.Link,
+                        },
+                        result = {
+                            Type = "YouTransmogResult",
                         },
                     },
                 },
@@ -1725,6 +1744,7 @@ do
                     {
                         formats = {
                             "LOOT_ROLL_WON_NO_SPAM_NEED",
+                            "LOOT_ROLL_WON_NO_SPAM_NEED_OFF_SPEC",
                         },
                         tokens = {
                             Tokens.ValueNumber,
@@ -1734,6 +1754,20 @@ do
                         },
                         result = {
                             Type = "NeedResult",
+                        },
+                    },
+                    {
+                        formats = {
+                            "LOOT_ROLL_WON_NO_SPAM_TRANSMOGRIFICATION",
+                        },
+                        tokens = {
+                            Tokens.ValueNumber,
+                            Tokens.NameTarget,
+                            Tokens.ValueExtraNumber,
+                            Tokens.Link,
+                        },
+                        result = {
+                            Type = "TransmogResult",
                         },
                     },
                 },
