@@ -2,8 +2,7 @@ local ns = select(2, ...) ---@class MiniLootNS
 
 local db = ns.Settings.db
 
----@diagnostic disable-next-line: undefined-global
-local GetSpellInfo = GetSpellInfo or function(spell)
+local function GetSpellInfoCompat(spell)
     local info = C_Spell.GetSpellInfo(spell)
     if not info then
         return
@@ -310,7 +309,7 @@ local TooltipHandlers = {
                         end
                     end
                     if spellId and not texture then
-                        _, _, texture = GetSpellInfo(spellId)
+                        _, _, texture = GetSpellInfoCompat(spellId)
                     end
                     spellName = spellString
                 end
