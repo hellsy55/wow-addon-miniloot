@@ -1,25 +1,19 @@
 ---
 name: miniloot-update
-description: Update MiniLoot from upstream/master while independently synchronizing new-features and master; handles update and atualizar commands.
+description: Update MiniLoot independently from upstream/master on local Windows or authorized Codex Cloud.
 ---
 
 # Update MiniLoot
 
-Follow repository AGENTS.md for branch invariants, approvals, language, delegation, and error handling.
-`update`, `atualizar`, `update MiniLoot`, and equivalent requests authorize ONLY Git synchronization. They NEVER authorize installation automatically. Update completion, a no-op, an updated origin/new-features, completed commits/pushes, and remote ZIP availability do not authorize installation.
-For a missing clone or initial configuration, read [initial setup](references/initial-setup.md). For normal updates, read [branch sync](references/branch-sync.md). Read [merge conflicts](references/merge-conflicts.md) only when conflicts occur.
+Follow AGENTS.md for language, identity, approvals, conflicts, delegation and failure gates. Update/atualizar authorizes Git synchronization only, never installation. Resolve host/root using [cloud environment](../../references/cloud-environment.md). Follow [maintenance runtime](../../references/maintenance-runtime.md): discover Python once, prepare once in update mode, adding --cloud-work only for an explicitly authorized Cloud work checkout. Reuse JSON refs; no redundant fetch/pull.
 
-Before any Git workflow, explicitly target `C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot` and confirm `git rev-parse --show-toplevel` resolves to that root. Set this working directory for EVERY execution, or use `git -C "C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot" ...`. Never assume the session directory or rely on an earlier `cd`.
+Read [initial setup](references/initial-setup.md) for missing clone/configuration and [branch sync](references/branch-sync.md) for updates. Read [merge conflicts](references/merge-conflicts.md) only when needed. Never resolve conflicts or commit automatically, publish previous local commits, or create library management. Errors leave the workflow PENDENTE, never a no-op.
 
-If the root preflight or any mandatory Git check fails, STOP dependent operations and report the update as PENDENTE. Status, branch detection, ancestry, fetch, and comparison failures never mean completion or no-op; respect documented non-error exit codes. Do not proceed to fetch, merge, push, the installation menu, or installation after a failed preflight. The menu below is permitted ONLY after all required synchronization succeeds or all required comparisons prove a real no-op. Never run the installer after Git commands fail outside the repository.
-
-Check current branch and working tree once; stop for unexpected local changes. Fetch origin and upstream once each and reuse their remote-tracking refs. Avoid unnecessary pull, repeated status, checkout, merge, push, and semantic analysis. Never automatically commit or resolve conflicts.
-
-Report new-features, master, incoming upstream commits when present, conflicts and adopted resolutions when present, and push. A fully current repository needs a compact no-op report followed by the same mandatory installation checkpoint as any successful synchronization:
+Report branches, incoming upstream range when present, human resolutions and publication compactly in Portuguese. Verify origin/new-features equals the approved result. Cloud/Linux: only state that physical installation is a local Windows step; no menu or PowerShell. Local Windows: after ALL synchronization succeeds or a complete no-op is proven, show exactly and wait:
 
 ```text
 a) instalar MiniLoot agora
 b) parar sem instalar
 ```
 
-ALWAYS show this menu in Portuguese and STOP waiting for the user's response. Only an explicit choice to install authorizes loading the install skill and executing its command. An unequivocal direct installation request is handled by the install skill and does not require this menu.
+Only choice a authorizes installation through the install skill. An unequivocal direct install request follows that skill's Windows-only exception.

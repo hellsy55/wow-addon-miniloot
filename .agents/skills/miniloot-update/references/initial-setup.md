@@ -1,10 +1,11 @@
 # Initial setup
 
-Repository: `C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot`.
-Preserve unexpected files. Create the Github parent only if missing; clone the fork only into an absent destination. Set origin to `https://github.com/hellsy55/wow-addon-miniloot.git` and upstream to `https://github.com/Vladinator/wow-addon-miniloot.git`. Fetch required refs.
+Distinguish local Windows from positively identified Codex Cloud using AGENTS.md and the environment reference. Preserve unexpected files. Setup is explicit work, not automatic startup.
 
-Use the already existing origin/new-features; do not create a replacement remote branch. A local tracking checkout is appropriate. Ensure local master exists tracking origin/master, without changing its contents. Verify remotes, branch relationships, clean working tree, and new-features tracking before infrastructure creation. Finish on new-features.
+Local Windows: use C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot. Create the Github parent only if missing; clone https://github.com/hellsy55/wow-addon-miniloot.git only into an absent destination. Command-scoped git -c http.sslBackend=openssl clone may address documented Schannel errors. Once cloned, use/validate repository-local http.sslBackend=openssl only when needed; never change global SSL configuration or disable sslVerify. Preserve the external installer C:\Users\jonat\Desktop\MiniLoot\atualizar-miniloot.ps1; never execute it during setup.
 
-Before cloning, command-scoped `git -c http.sslBackend=openssl clone ...` may work around Schannel SEC_E_NO_CREDENTIALS because no repository exists yet for local configuration. Once the repository exists, use `git config --local http.sslBackend openssl` and confirm it with `git config --local --get http.sslBackend`. Normal fetch/push operations do not need repeated `-c http.sslBackend=openssl` when that local configuration is present. Never configure this globally or disable `sslVerify`.
+Cloud: use the checkout supplied by the environment. Never clone to C:\, create Windows paths, create a PowerShell installer, or execute physical installation. Missing/invalid checkout is a real pending error.
 
-Initial setup creates AGENTS.md, the three requested skills and their references, and the external installer at `C:\Users\jonat\Desktop\MiniLoot\atualizar-miniloot.ps1`. Do not change Lua, commit, push, or install during initial setup.
+Follow maintenance-runtime.md: discover Python once and prepare once in the requested mode. Origin must exactly match https://github.com/hellsy55/wow-addon-miniloot.git. Update alone may add missing upstream https://github.com/Vladinator/wow-addon-miniloot.git. Reject incorrect URLs. Missing local branches derive only from their refreshed matching origin refs. Authorized Cloud work follows every clean/history gate before switching; never derive project branches from work. Finish on new-features with tracking; master remains upstream-only. Do not change remote.origin.fetch or GitHub default-branch settings.
+
+No Lua/TOC/pkgmeta changes, libraries, integration, commit, push, or installation during infrastructure setup.
