@@ -5,7 +5,7 @@ description: Install MiniLoot from a fresh published origin/new-features ZIP whe
 
 # Install MiniLoot
 
-First identify the host using [cloud environment](../../references/cloud-environment.md). Cloud/Linux: do not execute PowerShell or offer any installation menu, even for a direct install request. Inform the user in Portuguese that physical installation is a local Windows step and stop. All execution and menu instructions below apply ONLY to local Windows.
+Load this skill only on local Windows after valid installation authorization; AGENTS.md rejects non-Windows physical installation before loading these details. Reuse the frozen host/root and action eligibility; identify the host once if this is a standalone direct request. Cloud/other non-Windows hosts: do not load installation mechanics, execute PowerShell or offer any installation menu, even for a direct install request. Inform the user in Portuguese that physical installation is a local Windows step and stop. All execution and menu instructions below apply ONLY to local Windows. Installation does not require Python discovery or Git preparation. Verify the external installer exists only at this authorized installation stage; the installer validates AddOns per the installation mechanics. Neither path is probed during update, PR review or menu presentation.
 
 Installation requires separate, explicit authorization: either an explicit response choosing `a) instalar MiniLoot agora` after the update menu, or an unequivocal direct request such as `install MiniLoot`, `instalar MiniLoot`, or `instalar o addon`. A direct installation request authorizes execution without showing the menu first.
 
