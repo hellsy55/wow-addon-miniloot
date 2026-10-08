@@ -56,6 +56,7 @@ Never commit local test, scratch, diagnostic, temporary, or other development-on
 
 ## Operational boundaries
 
+Locate files with `rg --files` and symbols with `rg -n` before reading whole files; read relevant excerpts first and expand context only as needed, without truncating required complete review diffs.
 Treat failed commands as real errors; stop the affected stage and report it pending. Preserve unexpected files and never delete outside the project's explicitly owned structures. Never resolve merge conflicts automatically; follow the update conflict reference and wait for a user choice.
 Do routine work in the primary agent. Do not delegate status, fetch, fast-forward, simple updates, no-ops, installation, small diffs, or small clear PRs. Use exactly one read-only `deep_reviewer` only when it materially improves an important decision: nontrivial conflicts, large or ambiguous PRs, potential customization loss, interdependent modules, difficult regressions, or genuinely uncertain semantic interactions. Its review never authorizes edits, conflict resolution, commits, pushes, or installation.
 
