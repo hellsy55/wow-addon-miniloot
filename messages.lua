@@ -2310,6 +2310,10 @@ end
 ---@param supressRaidIcons? boolean
 ---@return MiniLootMessageFormatSimpleParserResults?, MiniLootMessage
 local function ProcessChatMessage(event, text, playerName, languageName, channelName, playerName2, specialFlags, zoneChannelID, channelIndex, channelBaseName, languageID, lineID, guid, bnSenderID, isMobile, isSubtitle, hideSenderInLetterbox, supressRaidIcons)
+    -- Restricted chat payloads must remain untouched; leave them to the original chat frame.
+    if type(text) ~= "string" or (type(issecretvalue) == "function" and issecretvalue(text)) then
+        return ---@diagnostic disable-line: missing-return-value
+    end
     for _, message in ipairs(MessagesCollection) do
         if TableContains(message.events, event) then
             for _, messageFormat in ipairs(message.formats) do

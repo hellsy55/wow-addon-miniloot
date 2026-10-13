@@ -703,25 +703,36 @@ local function GetUnitMawPowerInfo(unit, query, fallback)
         end
         return ---@diagnostic disable-line: missing-return-value
     end
+    local IsSecretValue = type(issecretvalue) == "function" and issecretvalue
+    if IsSecretValue and (IsSecretValue(unit) or IsSecretValue(query)) then
+        return ---@diagnostic disable-line: missing-return-value
+    end
     for i = 1, 100 do
         local success, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "MAW")
         if not success or not aura then
             break
         end
-        local spellTexture = aura.icon
-        local spellID = aura.spellId
-        local spellLink = C_Spell.GetMawPowerLinkBySpellID(spellID) ---@type string?
-        if spellLink then
-            if query == spellID or query == spellLink then
-                return spellTexture, spellID, spellLink
-            end
-            local _, spellName = spellLink:match(LinkMarkupPattern1)
-            if query == spellName then
-                return spellTexture, spellID, spellLink
-            end
-            _, spellName = spellLink:match(LinkMarkupPattern2)
-            if query == spellName then
-                return spellTexture, spellID, spellLink
+        -- Aura tables may contain individually secret fields even if the table is readable.
+        if not IsSecretValue or not IsSecretValue(aura) then
+            local spellTexture = aura.icon
+            local spellID = aura.spellId
+            if type(spellID) == "number" and
+                (not IsSecretValue or (not IsSecretValue(spellTexture) and not IsSecretValue(spellID))) then
+                local linkSuccess, spellLink = pcall(C_Spell.GetMawPowerLinkBySpellID, spellID) ---@type boolean, string?
+                if linkSuccess and type(spellLink) == "string" and
+                    (not IsSecretValue or not IsSecretValue(spellLink)) then
+                    if query == spellID or query == spellLink then
+                        return spellTexture, spellID, spellLink
+                    end
+                    local _, spellName = spellLink:match(LinkMarkupPattern1)
+                    if query == spellName then
+                        return spellTexture, spellID, spellLink
+                    end
+                    _, spellName = spellLink:match(LinkMarkupPattern2)
+                    if query == spellName then
+                        return spellTexture, spellID, spellLink
+                    end
+                end
             end
         end
     end
