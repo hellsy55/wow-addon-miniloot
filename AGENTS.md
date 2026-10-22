@@ -2,6 +2,8 @@
 
 Speak to the user in Portuguese. Write project files, documentation, code comments, and Git messages in English. Use only the configured user Git identity. Do not add AI signatures, generated-by notices, or Co-authored-by trailers.
 
+- Do not pin models or reasoning effort in this repository. The main agent and its subagents must respect the session/task selections and inherit them when supported by Codex.
+
 ## Routing
 
 Recognize case-insensitive commands and close wording variants:
