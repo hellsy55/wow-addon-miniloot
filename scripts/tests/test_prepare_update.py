@@ -16,7 +16,7 @@ class PreparationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
-        self.repo = self.base / "checkout"
+        self.repo = self.base / "checkout with spaces"
         self.remote = self.base / "origin.git"
         self.upstream = self.base / "upstream.git"
         self.real_run = subprocess.run
@@ -79,6 +79,74 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(self.g("config", "branch.new-features.remote"), "origin")
         self.assertEqual(self.g("config", "branch.new-features.merge"), "refs/heads/new-features")
         self.assertFalse({"merge", "reset", "commit", "push"} & {c[0] for c in self.commands})
+
+    def test_healthy_invocation_counts(self):
+        for mode, expected in (("update", 25), ("development", 13)):
+            with self.subTest(mode=mode):
+                self.commands.clear()
+                self.prepare(mode)
+                self.assertEqual(len(self.commands), expected)
+                self.assertEqual(self.commands.count(["remote"]), int(mode == "update"))
+                for flag in ([], ["--push"]):
+                    self.assertIn(["remote", "get-url", *flag, "--all", "origin"], self.commands)
+
+    def test_each_unfinished_marker(self):
+        for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"):
+            with self.subTest(marker=marker):
+                path = Path(self.g("rev-parse", "--git-path", marker))
+                path = path if path.is_absolute() else self.repo / path
+                path.touch()
+                try:
+                    self.commands.clear()
+                    with self.assertRaisesRegex(helper.PreparationError, "Unfinished"):
+                        self.prepare()
+                    self.assertEqual(len(self.commands), 3)
+                finally:
+                    path.unlink()
+
+    def test_invalid_marker_responses(self):
+        for output, code in (("", 0), ("one\ntwo", 0), ("\n".join(["same"] * 6), 0),
+                             ("a\nb\n\nd\ne\nf", 0), ("a\nb\nc\nd\ne\nf\ng", 0), ("", 128)):
+            with self.subTest(output=output, code=code):
+                def response(command, **kwargs):
+                    if command[3:5] == ["rev-parse", "--git-path"]:
+                        return subprocess.CompletedProcess(command, code, output, "marker failure")
+                    return self.intercept(command, **kwargs)
+                self.commands.clear()
+                with patch.object(helper.subprocess, "run", side_effect=response):
+                    with self.assertRaises(helper.PreparationError):
+                        self.prepare()
+                self.assertFalse(any(c[0] in ("fetch", "remote", "config", "branch", "switch") for c in self.commands))
+
+    def test_grouped_paths_match_individual_queries_in_worktree(self):
+        worktree = self.base / "linked worktree with spaces"
+        self.g("worktree", "add", "--detach", str(worktree))
+        markers = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer")
+        for checkout in (self.repo, worktree):
+            with self.subTest(checkout=checkout):
+                individual = [self.g("rev-parse", "--git-path", m, cwd=checkout) for m in markers]
+                grouped = self.g("rev-parse", *(a for m in markers for a in ("--git-path", m)), cwd=checkout).splitlines()
+                self.assertEqual(grouped, individual)
+
+    def test_absolute_marker_paths(self):
+        original = self.intercept
+        def absolute_paths(command, **kwargs):
+            result = original(command, **kwargs)
+            if command[3:5] == ["rev-parse", "--git-path"]:
+                paths = [Path(value) for value in result.stdout.splitlines()]
+                result.stdout = "\n".join(str(p if p.is_absolute() else self.repo / p) for p in paths)
+            return result
+        with patch.object(helper.subprocess, "run", side_effect=absolute_paths):
+            self.prepare("development")
+
+    def test_origin_wrong_push_in_both_modes(self):
+        self.g("remote", "set-url", "--push", "origin", "https://example.invalid/repo")
+        for mode in ("update", "development"):
+            with self.subTest(mode=mode):
+                self.commands.clear()
+                with self.assertRaisesRegex(helper.PreparationError, "origin URL"):
+                    self.prepare(mode)
+                self.assertFalse(any(c[0] == "fetch" for c in self.commands))
 
     def test_cloud_creates_missing_branches(self):
         self.work()

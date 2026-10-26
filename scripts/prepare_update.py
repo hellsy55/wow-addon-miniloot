@@ -32,8 +32,12 @@ def prepare(mode="update", cloud_work=False, cwd=None):
         raise PreparationError("Invalid mode")
     if git("status", "--porcelain=v1", "--untracked-files=all")[0]:
         raise PreparationError("Dirty worktree/index; branches were not changed")
-    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"):
-        path = Path(git("rev-parse", "--git-path", marker)[0])
+    markers = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer")
+    paths = git("rev-parse", *(arg for marker in markers for arg in ("--git-path", marker)))[0].splitlines()
+    if len(paths) != len(markers) or len(set(paths)) != len(markers) or any(not path.strip() for path in paths):
+        raise PreparationError("Invalid Git operation marker paths")
+    for marker, value in zip(markers, paths):
+        path = Path(value)
         if (path if path.is_absolute() else root / path).exists():
             raise PreparationError("Unfinished Git operation")
     branch = git("symbolic-ref", "--short", "HEAD")[0]
@@ -47,8 +51,8 @@ def prepare(mode="update", cloud_work=False, cwd=None):
             raise PreparationError(name + " URL must be exactly " + expected)
 
     validate_remote("origin", ORIGIN)
-    remotes = git("remote")[0].splitlines()
     if mode == "update":
+        remotes = git("remote")[0].splitlines()
         if "upstream" in remotes:
             validate_remote("upstream", UPSTREAM)
         else:
