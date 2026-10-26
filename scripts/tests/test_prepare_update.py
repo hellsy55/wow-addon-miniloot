@@ -10,6 +10,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import prepare_update as helper
 
+NATIVE_GIT = helper.resolve_git(Path(__file__).resolve().parents[2])
+
 
 class PreparationTests(unittest.TestCase):
     def setUp(self):
@@ -21,6 +23,9 @@ class PreparationTests(unittest.TestCase):
         self.upstream = self.base / "upstream.git"
         self.real_run = subprocess.run
         self.commands = []
+        resolver = patch.object(helper, "resolve_git", return_value=NATIVE_GIT)
+        self.resolver = resolver.start()
+        self.addCleanup(resolver.stop)
         self.environment = patch.dict(os.environ, {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
                                                    "GIT_TERMINAL_PROMPT": "0", "MINILOOT_MAINTENANCE_HOST": "codex-cloud"})
         self.environment.start()
@@ -48,11 +53,12 @@ class PreparationTests(unittest.TestCase):
         self.addCleanup(self.host.stop)
 
     def g(self, *args, cwd=None):
-        result = self.real_run(["git", "-C", str(cwd or self.repo), *map(str, args)], capture_output=True, text=True)
+        result = self.real_run([NATIVE_GIT, "-C", str(cwd or self.repo), *map(str, args)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
 
     def intercept(self, command, **kwargs):
+        self.assertEqual(command[:3], [NATIVE_GIT, "-C", str(self.repo.resolve())])
         self.commands.append(command[3:])
         if command[3] == "fetch":
             command = list(command)
@@ -348,7 +354,7 @@ class PreparationTests(unittest.TestCase):
         self.g("switch", "new-features")
         result = self.prepare()
         self.assertEqual(result["behind"], {"new-features": 0, "master": 0})
-        check = self.real_run(["git", "-C", str(self.repo), "merge-base", "--is-ancestor",
+        check = self.real_run([NATIVE_GIT, "-C", str(self.repo), "merge-base", "--is-ancestor",
                                result["refs"]["upstream/master"], result["local_tips"]["new-features"]],
                               capture_output=True, text=True)
         self.assertEqual(check.returncode, 1, check.stderr)
@@ -368,6 +374,212 @@ class PreparationTests(unittest.TestCase):
         self.assertNotEqual(baseline["local_tips"]["new-features"], self.g("rev-parse", "new-features"))
         refreshed_tip = self.g("rev-parse", "refs/heads/new-features")
         self.assertEqual(refreshed_tip, advanced)
+
+
+    def test_git_failure_diagnostics_stop_immediately(self):
+        cases = [
+            (128, "", "Could not resolve host: github.com"),
+            (128, "", "Could not resolve proxy: proxy.invalid"),
+            (128, "", "Authentication failed"),
+            (128, "", ""), (128, "stdout detail", ""),
+            (128, "", "stderr detail"), (128, "out", "err"),
+            (7, "unexpected", "failure"),
+        ]
+        for code, out, err in cases:
+            with self.subTest(code=code, out=out, err=err):
+                with patch.object(helper.subprocess, "run", return_value=
+                                  subprocess.CompletedProcess([], code, out, err)) as run:
+                    with self.assertRaises(helper.PreparationError) as caught:
+                        self.prepare()
+                message = str(caught.exception)
+                self.assertIn("git rev-parse --show-toplevel", message)
+                self.assertIn("exited " + str(code), message)
+                for name, value in (("stdout", out), ("stderr", err)):
+                    if value:
+                        self.assertIn(name + "=", message)
+                        self.assertIn(value, message)
+                if not out and not err:
+                    self.assertIn("stdout and stderr are empty", message)
+                self.assertEqual(run.call_count, 1)
+
+    def test_fetch_failures_have_no_retry_or_continuation(self):
+        for out, err in (("", "Could not resolve host: github.com"),
+                         ("", "Could not resolve proxy: proxy.invalid"),
+                         ("", "Authentication failed"), ("", ""),
+                         ("output only", ""), ("out", "err"),
+                         ("https://user:secret@github.com/repo?key=hidden", "token=private"),
+                         ("x" * 10000, "y" * 10000)):
+            with self.subTest(out=out[:30], err=err[:30]):
+                seen = []
+                def response(command, **kwargs):
+                    seen.append(command[3])
+                    if command[3] == "fetch":
+                        return subprocess.CompletedProcess(command, 128, out, err)
+                    return self.intercept(command, **kwargs)
+                with patch.object(helper.subprocess, "run", side_effect=response):
+                    with self.assertRaises(helper.PreparationError) as caught:
+                        self.prepare()
+                message = str(caught.exception)
+                self.assertIn("git fetch --no-tags origin", message)
+                self.assertIn("exited 128", message)
+                self.assertEqual(seen.count("fetch"), 1)
+                self.assertEqual(seen[-1], "fetch")
+                self.assertFalse({"config", "branch", "switch", "merge", "push"} & set(seen))
+                for secret in ("user:secret", "hidden", "private"):
+                    self.assertNotIn(secret, message)
+                self.assertLess(len(message), 5000)
+
+    def test_git_launch_failure(self):
+        with patch.object(helper.subprocess, "run", side_effect=FileNotFoundError("missing Git")) as run:
+            with self.assertRaisesRegex(helper.PreparationError, "Could not start.*git rev-parse"):
+                self.prepare()
+        self.assertEqual(run.call_count, 1)
+
+    def test_allowed_one_and_unexpected_history_codes(self):
+        for operation in ("merge-base", "show-ref"):
+            for code in (1, 128):
+                with self.subTest(operation=operation, code=code):
+                    seen = []
+                    def response(command, **kwargs):
+                        seen.append(command[3])
+                        if command[3] == operation:
+                            return subprocess.CompletedProcess(command, code, "", "")
+                        return self.intercept(command, **kwargs)
+                    with patch.object(helper.subprocess, "run", side_effect=response):
+                        if operation == "show-ref" and code == 1:
+                            self.work()
+                            self.assertEqual(self.prepare("development", cloud=True)["created"], ["new-features"])
+                        else:
+                            with self.assertRaises(helper.PreparationError) as caught:
+                                self.prepare("development")
+                            if code == 128:
+                                self.assertIn("exited 128", str(caught.exception))
+                            else:
+                                self.assertIn("unpublished/divergent", str(caught.exception))
+                            self.assertEqual(seen[-1], operation)
+
+    def test_resolution_is_once_per_preparation(self):
+        self.resolver.reset_mock()
+        self.prepare("development")
+        self.resolver.assert_called_once_with(self.repo.resolve())
+
+    def test_cli_failure_json(self):
+        import contextlib
+        import io
+        import json
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["prepare_update.py"]), \
+                patch.object(helper, "prepare", side_effect=helper.PreparationError("failed")), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(helper.main(), 1)
+        self.assertEqual(json.loads(output.getvalue()), {"error": "failed"})
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_redaction_and_bounds(self):
+        secrets = ["user:pass", "querysecret", "headersecret", "tokensecret", "ghp_abcdef123"]
+        raw = ("https://user:pass@github.com/repo?key=querysecret "
+               "token=tokensecret ghp_abcdef123\nAuthorization: Bearer headersecret\n"
+               + "x" * 5000 + "\x1b[31m")
+        result = helper.diagnostic(raw)
+        for secret in secrets:
+            self.assertNotIn(secret, result)
+        self.assertIn("github.com/repo", result)
+        self.assertIn("[REDACTED]", result)
+        self.assertIn("[truncated]", result)
+        self.assertLessEqual(len(result), 1600)
+        self.assertNotIn("\x1b", result)
+
+    def test_control_characters_and_short_credentials(self):
+        result = helper.diagnostic('Proxy-Authorization: Basic abc\npassword="two words"\n\x1b[31m')
+        self.assertNotIn("abc", result)
+        self.assertNotIn("two words", result)
+        self.assertIn(r"\u001b", result)
+        self.assertNotIn("jsonsecret", helper.diagnostic('{"access_token": "jsonsecret"}'))
+
+
+class GitSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.root = self.base / "checkout"
+        self.root.mkdir()
+        self.git = self.base / "Git" / "cmd" / "git.exe"
+        self.git.parent.mkdir(parents=True)
+        self.git.touch()
+
+    def test_resolution_failure_precedes_git(self):
+        with patch.object(helper, "resolve_git", side_effect=helper.PreparationError("unavailable")), \
+                patch.object(helper.subprocess, "run") as run:
+            with self.assertRaisesRegex(helper.PreparationError, "unavailable"):
+                helper.prepare(cwd=self.root)
+        run.assert_not_called()
+
+    def windows(self):
+        return patch.object(helper, "os", type("Host", (), {"name": "nt"}))
+
+    def test_windows_known_install_ignores_path(self):
+        with self.windows(), patch.object(helper, "WINDOWS_GIT", self.git), \
+                patch.object(helper.shutil, "which", side_effect=AssertionError("PATH consulted")), \
+                patch.object(helper.subprocess, "run", side_effect=AssertionError("subprocess launched")):
+            self.assertEqual(helper.resolve_git(self.root), str(self.git.resolve()))
+
+    def test_windows_missing_directory_and_checkout_rejected(self):
+        (self.root / "git.exe").touch()
+        for candidate in (self.base / "missing.exe", self.git.parent, self.root / "git.exe"):
+            with self.subTest(candidate=candidate):
+                with self.windows(), patch.object(helper, "WINDOWS_GIT", candidate):
+                    with self.assertRaises(helper.PreparationError):
+                        helper.resolve_git(self.root)
+
+    def test_linux_restricted_search_and_missing(self):
+        with patch.object(helper, "os", type("Host", (), {"name": "posix"})), \
+                patch.object(helper.sys, "platform", "linux"), \
+                patch.object(helper.shutil, "which", return_value=None) as which, \
+                patch.object(helper.subprocess, "run", side_effect=AssertionError("subprocess launched")):
+            with self.assertRaisesRegex(helper.PreparationError, "not found"):
+                helper.resolve_git(self.root)
+            which.assert_called_once_with("git", path="/usr/bin:/bin:/usr/local/bin")
+
+    def test_linux_permissions_and_checkout(self):
+        from types import SimpleNamespace
+        for uid, mode, accepted in ((0, 0o100755, True), (1000, 0o100755, False),
+                                    (0, 0o100775, False), (0, 0o100777, False), (0, 0o100644, False)):
+            with self.subTest(uid=uid, mode=mode):
+                with patch.object(helper, "os", type("Host", (), {"name": "posix"})), \
+                        patch.object(helper.sys, "platform", "linux"), \
+                        patch.object(helper.shutil, "which", return_value=str(self.git)), \
+                        patch.object(Path, "stat", return_value=SimpleNamespace(st_uid=uid, st_mode=mode)):
+                    if accepted:
+                        self.assertEqual(helper.resolve_git(self.root), str(self.git.resolve()))
+                    else:
+                        with self.assertRaises(helper.PreparationError):
+                            helper.resolve_git(self.root)
+
+    def test_windows_redirected_installation_rejected(self):
+        with self.windows(), patch.object(helper, "WINDOWS_GIT", self.git), \
+                patch.object(Path, "resolve", return_value=Path(NATIVE_GIT)):
+            with self.assertRaisesRegex(helper.PreparationError, "outside its installation"):
+                helper.resolve_git(self.root)
+
+    def test_linux_writable_ancestor_rejected(self):
+        from types import SimpleNamespace
+        real_stat = Path.stat
+        def attributes(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            return SimpleNamespace(st_uid=0, st_mode=info.st_mode | (0o020 if path == self.git.parent else 0o111))
+        with patch.object(helper, "os", type("Host", (), {"name": "posix"})), \
+                patch.object(helper.sys, "platform", "linux"), \
+                patch.object(helper.shutil, "which", return_value=str(self.git)), \
+                patch.object(Path, "stat", attributes):
+            with self.assertRaisesRegex(helper.PreparationError, "group/world-writable"):
+                helper.resolve_git(self.root)
+        with patch.object(helper, "os", type("Host", (), {"name": "posix"})), \
+                patch.object(helper.sys, "platform", "linux"), \
+                patch.object(helper.shutil, "which", return_value=str(self.root)):
+            with self.assertRaisesRegex(helper.PreparationError, "inside the checkout"):
+                helper.resolve_git(self.root)
 
 
 if __name__ == "__main__":

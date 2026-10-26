@@ -4,26 +4,83 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 import sys
 
 ORIGIN = "https://github.com/hellsy55/wow-addon-miniloot.git"
 UPSTREAM = "https://github.com/Vladinator/wow-addon-miniloot.git"
 WINDOWS_ROOT = Path(r"C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot")
+WINDOWS_GIT = Path(r"C:\Program Files\Git\cmd\git.exe")
+LINUX_GIT_PATH = "/usr/bin:/bin:/usr/local/bin"
 
 
 class PreparationError(RuntimeError):
     pass
 
 
+def resolve_git(root):
+    """Use the managed Windows install or a root-owned Linux system executable."""
+    try:
+        if os.name == "nt":
+            candidate = WINDOWS_GIT
+        elif sys.platform.startswith("linux"):
+            found = shutil.which("git", path=LINUX_GIT_PATH)
+            if not found:
+                raise PreparationError("Trusted Git executable not found in Linux system directories")
+            candidate = Path(found)
+        else:
+            raise PreparationError("Unsupported host for trusted Git selection")
+        resolved = candidate.resolve(strict=True)
+        if resolved == root or root in resolved.parents or not resolved.is_file():
+            raise PreparationError("Trusted Git executable is invalid or inside the checkout")
+        if os.name == "nt":
+            # Do not follow a redirected installation outside the expected Git tree.
+            if WINDOWS_GIT.parent.parent not in resolved.parents:
+                raise PreparationError("Trusted Windows Git resolves outside its installation")
+        else:
+            if not resolved.stat().st_mode & 0o111:
+                raise PreparationError("Trusted Git is not executable")
+            for path in (resolved, *resolved.parents):
+                info = path.stat()
+                if info.st_uid != 0 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                    raise PreparationError("Trusted Linux Git path must be root-owned and not group/world-writable")
+        return str(resolved)
+    except OSError as error:
+        raise PreparationError("Trusted Git executable unavailable: " + diagnostic(error)) from None
+
+
+def diagnostic(value):
+    """Redact common credential forms before bounding and escaping untrusted text."""
+    value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/]*@", r"\1[REDACTED]@", str(value))
+    value = re.sub(r"(?i)([?&](?:[^\s=&#]+)=)[^\s&#]*", r"\1[REDACTED]", value)
+    value = re.sub(r"(?im)\b((?:proxy-)?authorization\s*[:=]\s*)[^\r\n]+", r"\1[REDACTED]", value)
+    value = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", value)
+    value = re.sub(r"(?i)\b((?:[\w.-]*(?:token|password|passwd|secret|credential|api[_-]?key)[\w.-]*)[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+                   r"\1[REDACTED]", value)
+    value = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b", "[REDACTED]", value)
+    # JSON quoting neutralizes control characters, including terminal escapes.
+    escaped = json.dumps(value.strip(), ensure_ascii=True)
+    return escaped if len(escaped) <= 1600 else escaped[:1580] + "...[truncated]"
+
+
 def prepare(mode="update", cloud_work=False, cwd=None):
     def git(*args, allowed=(0,)):
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+        command = "git " + " ".join(args)
+        try:
+            result = subprocess.run([executable, "-C", str(root), *args], capture_output=True, text=True)
+        except OSError as error:
+            raise PreparationError("Could not start " + diagnostic(command) + ": " + diagnostic(error)) from None
         if result.returncode not in allowed:
-            raise PreparationError("git " + " ".join(args) + ": " + result.stderr.strip())
+            details = [name + "=" + diagnostic(value) for name, value in
+                       (("stderr", result.stderr), ("stdout", result.stdout)) if value.strip()]
+            raise PreparationError(diagnostic(command) + " exited " + str(result.returncode) + ": "
+                                   + ("; ".join(details) or "stdout and stderr are empty"))
         return result.stdout.strip(), result.returncode
 
     root = Path(cwd or Path.cwd()).resolve()
+    executable = resolve_git(root)
     actual = Path(git("rev-parse", "--show-toplevel")[0]).resolve()
     if actual != root or (os.name == "nt" and actual != WINDOWS_ROOT.resolve()):
         raise PreparationError("Invalid repository root; use the actual checkout root")
