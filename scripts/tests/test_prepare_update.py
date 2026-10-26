@@ -10,7 +10,13 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import prepare_update as helper
 
-NATIVE_GIT = helper.resolve_git(Path(__file__).resolve().parents[2])
+def resolve_test_git(root):
+    """Forward an explicit suite opt-in; Cloud identity is verified externally."""
+    cloud_work = sys.platform.startswith("linux") and os.environ.get("MINILOOT_TEST_CLOUD_WORK") == "1"
+    return helper.resolve_git(root, cloud_work=cloud_work)
+
+
+NATIVE_GIT = resolve_test_git(Path(__file__).resolve().parents[2])
 
 
 class PreparationTests(unittest.TestCase):
@@ -739,6 +745,71 @@ class CloudGitSelectionTests(unittest.TestCase):
         self.host.environ.clear()
         with self.assertRaises(helper.PreparationError):
             helper.prepare(cwd=self.root, cloud_work=True)
+        self.run.assert_not_called()
+
+    def test_bootstrap_windows_preserves_selection(self):
+        self.host.name = "nt"
+        with patch.object(sys, "platform", "win32"), patch.object(helper, "WINDOWS_GIT", self.git), \
+                patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": "1"}), \
+                patch.object(helper, "resolve_git", wraps=helper.resolve_git) as resolver:
+            self.assertEqual(resolve_test_git(self.root), str(self.git))
+        resolver.assert_called_once_with(self.root, cloud_work=False)
+        self.maps.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_bootstrap_linux_root_preserves_selection(self):
+        from types import SimpleNamespace
+        for path in (self.git, *self.git.parents):
+            self.info[path] = SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100755)
+        with patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": ""}):
+            self.assertEqual(resolve_test_git(self.root), str(self.git))
+        self.maps.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_bootstrap_cloud_explicit_context(self):
+        with patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": "1"}), \
+                patch.object(helper, "resolve_git", wraps=helper.resolve_git) as resolver:
+            self.assertEqual(resolve_test_git(self.root), str(self.git))
+        resolver.assert_called_once_with(self.root, cloud_work=True)
+        self.assertEqual(self.maps.call_count, 2)
+        self.run.assert_not_called()
+
+    def test_bootstrap_remapped_ownership_without_opt_in(self):
+        for value in ("", "0", "true"):
+            with self.subTest(value=value), patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": value}):
+                with self.assertRaises(helper.PreparationError):
+                    resolve_test_git(self.root)
+        with patch.dict(os.environ):
+            os.environ.pop("MINILOOT_TEST_CLOUD_WORK", None)
+            with self.assertRaises(helper.PreparationError):
+                resolve_test_git(self.root)
+        self.maps.assert_not_called()
+
+    def test_bootstrap_marker_missing_or_wrong(self):
+        with patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": "1"}):
+            for marker in (None, "local"):
+                self.host.environ = {} if marker is None else {"MINILOOT_MAINTENANCE_HOST": marker}
+                before = dict(self.host.environ)
+                with self.assertRaises(helper.PreparationError):
+                    resolve_test_git(self.root)
+                self.assertEqual(self.host.environ, before)
+
+    def test_bootstrap_does_not_bypass_real_validation(self):
+        with patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": "1"}):
+            self.maps.return_value = "1000 0 2"
+            with self.assertRaises(helper.PreparationError):
+                resolve_test_git(self.root)
+            self.maps.return_value = "1000 0 1"
+            self.host.statvfs.side_effect = OSError("mount unavailable")
+            with self.assertRaises(helper.PreparationError):
+                resolve_test_git(self.root)
+        self.run.assert_not_called()
+
+    def test_bootstrap_rejects_unapproved_executable(self):
+        with patch.dict(os.environ, {"MINILOOT_TEST_CLOUD_WORK": "1"}), \
+                patch.object(Path, "resolve", return_value=Path("/tmp/git")):
+            with self.assertRaises(helper.PreparationError):
+                resolve_test_git(self.root)
         self.run.assert_not_called()
 
 
