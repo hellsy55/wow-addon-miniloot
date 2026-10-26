@@ -81,11 +81,12 @@ class PreparationTests(unittest.TestCase):
         self.assertFalse({"merge", "reset", "commit", "push"} & {c[0] for c in self.commands})
 
     def test_healthy_invocation_counts(self):
-        for mode, expected in (("update", 25), ("development", 13)):
+        for mode, expected in (("update", 23), ("development", 13)):
             with self.subTest(mode=mode):
                 self.commands.clear()
                 self.prepare(mode)
                 self.assertEqual(len(self.commands), expected)
+                self.assertEqual(sum(c[0] == "for-each-ref" for c in self.commands), 1)
                 self.assertEqual(self.commands.count(["remote"]), int(mode == "update"))
                 for flag in ([], ["--push"]):
                     self.assertIn(["remote", "get-url", *flag, "--all", "origin"], self.commands)
@@ -154,6 +155,7 @@ class PreparationTests(unittest.TestCase):
         tip = self.g("rev-parse", "work")
         result = self.prepare(cloud=True)
         self.assertEqual(result["created"], ["new-features", "master"])
+        self.assertEqual(result["local_tips"], {name: self.g("rev-parse", name) for name in ("new-features", "master")})
         self.assertEqual(self.g("branch", "--show-current"), "new-features")
         self.assertEqual(self.g("rev-parse", "work"), tip)
         self.assertEqual(self.g("config", "branch.master.remote"), "origin")
@@ -267,6 +269,105 @@ class PreparationTests(unittest.TestCase):
         result = self.prepare()
         self.assertEqual(result["behind"]["new-features"], 1)
         self.assertEqual(self.g("rev-parse", "new-features"), initial)
+        self.assertEqual(result["local_tips"]["new-features"], initial)
+
+    def test_grouped_tips_preserve_json_contract(self):
+        for mode in ("update", "development"):
+            with self.subTest(mode=mode):
+                result = self.prepare(mode)
+                names = ["new-features"] + (["master"] if mode == "update" else [])
+                refs = ["origin/" + name for name in names] + (["upstream/master"] if mode == "update" else [])
+                self.assertEqual(set(result), {"root", "mode", "branch", "created", "refs", "behind", "local_tips"})
+                self.assertEqual(result["root"], str(self.repo.resolve()))
+                self.assertEqual(result["mode"], mode)
+                self.assertEqual(result["branch"], "new-features")
+                self.assertEqual(result["created"], [])
+                self.assertEqual(result["refs"], {ref: self.g("rev-parse", "--verify", "refs/remotes/" + ref) for ref in refs})
+                self.assertEqual(result["local_tips"], {name: self.g("rev-parse", "--verify", "refs/heads/" + name) for name in names})
+                self.assertEqual(result["behind"], dict.fromkeys(names, 0))
+
+    def test_invalid_grouped_reference_responses(self):
+        for mode in ("update", "development"):
+            for case in ("empty", "missing", "duplicate", "extra", "prefix", "short", "nonhex", "long", "columns", "blank"):
+                with self.subTest(mode=mode, case=case):
+                    def response(command, **kwargs):
+                        result = self.intercept(command, **kwargs)
+                        if command[3] == "for-each-ref":
+                            lines = result.stdout.splitlines()
+                            ref, sha = lines[0].split("\t")
+                            if case == "empty": lines = []
+                            elif case == "missing": lines.pop()
+                            elif case == "duplicate": lines.append(lines[0])
+                            elif case == "extra": lines.append("refs/heads/work\t" + sha)
+                            elif case == "prefix": lines[0] = ref + "/unexpected\t" + sha
+                            elif case == "short": lines[0] = ref + "\t" + sha[:-1]
+                            elif case == "nonhex": lines[0] = ref + "\t" + "z" * 40
+                            elif case == "long": lines[0] = ref + "\t" + sha + "0"
+                            elif case == "columns": lines[0] += "\textra"
+                            elif case == "blank": lines.insert(1, "")
+                            result.stdout = "\n".join(lines)
+                        return result
+                    with patch.object(helper.subprocess, "run", side_effect=response):
+                        with self.assertRaises(helper.PreparationError):
+                            self.prepare(mode)
+
+    def test_grouped_reference_failure(self):
+        def response(command, **kwargs):
+            if command[3] == "for-each-ref":
+                return subprocess.CompletedProcess(command, 128, "", "reference failure")
+            return self.intercept(command, **kwargs)
+        with patch.object(helper.subprocess, "run", side_effect=response):
+            with self.assertRaisesRegex(helper.PreparationError, "reference failure"):
+                self.prepare()
+
+    def test_grouped_reference_order_is_irrelevant(self):
+        def response(command, **kwargs):
+            result = self.intercept(command, **kwargs)
+            if command[3] == "for-each-ref":
+                result.stdout = "\n".join(reversed(result.stdout.splitlines()))
+            return result
+        with patch.object(helper.subprocess, "run", side_effect=response):
+            result = self.prepare()
+        self.assertEqual(result["local_tips"], {name: self.g("rev-parse", name) for name in ("new-features", "master")})
+
+    def test_cloud_development_tips_exclude_work_and_master(self):
+        self.work()
+        work = self.g("rev-parse", "work")
+        master = self.g("rev-parse", "master")
+        result = self.prepare("development", cloud=True)
+        self.assertEqual(result["local_tips"], {"new-features": self.g("rev-parse", "new-features")})
+        self.assertEqual(result["created"], ["new-features"])
+        self.assertEqual(self.g("rev-parse", "work"), work)
+        self.assertEqual(self.g("rev-parse", "master"), master)
+
+    def test_zero_behind_does_not_prove_upstream_ancestry(self):
+        self.g("switch", "master")
+        self.commit()
+        self.g("push", str(self.remote), "master")
+        self.g("push", str(self.upstream), "master")
+        self.g("switch", "new-features")
+        result = self.prepare()
+        self.assertEqual(result["behind"], {"new-features": 0, "master": 0})
+        check = self.real_run(["git", "-C", str(self.repo), "merge-base", "--is-ancestor",
+                               result["refs"]["upstream/master"], result["local_tips"]["new-features"]],
+                              capture_output=True, text=True)
+        self.assertEqual(check.returncode, 1, check.stderr)
+
+    def test_local_tip_baseline_requires_refresh_after_fast_forward(self):
+        initial = self.g("rev-parse", "new-features")
+        self.commit()
+        advanced = self.g("rev-parse", "new-features")
+        self.g("push", str(self.remote), "new-features")
+        self.g("switch", "--detach", initial)
+        self.g("branch", "-f", "new-features", initial)
+        self.g("switch", "new-features")
+        baseline = self.prepare("development")
+        self.assertEqual(baseline["local_tips"]["new-features"], initial)
+        self.assertEqual(baseline["refs"]["origin/new-features"], advanced)
+        self.g("merge", "--ff-only", "origin/new-features")
+        self.assertNotEqual(baseline["local_tips"]["new-features"], self.g("rev-parse", "new-features"))
+        refreshed_tip = self.g("rev-parse", "refs/heads/new-features")
+        self.assertEqual(refreshed_tip, advanced)
 
 
 if __name__ == "__main__":

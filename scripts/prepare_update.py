@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -91,8 +92,20 @@ def prepare(mode="update", cloud_work=False, cwd=None):
     refs = ["origin/" + name for name in names]
     if mode == "update":
         refs.append("upstream/master")
+    expected = ["refs/heads/" + name for name in names] + ["refs/remotes/" + ref for ref in refs]
+    output = git("for-each-ref", "--format=%(refname)%09%(objectname)", *expected)[0]
+    tips = {}
+    for line in output.splitlines():
+        fields = line.split("\t")
+        if (len(fields) != 2 or fields[0] not in expected or fields[0] in tips
+                or re.fullmatch(r"[0-9a-f]{40}", fields[1]) is None):
+            raise PreparationError("Invalid prepared reference response")
+        tips[fields[0]] = fields[1]
+    if set(tips) != set(expected):
+        raise PreparationError("Missing prepared references")
     return {"root": str(root), "mode": mode, "branch": "new-features",
-            "created": missing, "refs": {ref: git("rev-parse", ref)[0] for ref in refs},
+            "created": missing, "refs": {ref: tips["refs/remotes/" + ref] for ref in refs},
+            "local_tips": {name: tips["refs/heads/" + name] for name in names},
             "behind": {name: int(git("rev-list", "--count", name + "..origin/" + name)[0]) for name in names}}
 
 
