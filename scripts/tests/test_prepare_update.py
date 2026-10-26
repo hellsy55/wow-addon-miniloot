@@ -461,7 +461,7 @@ class PreparationTests(unittest.TestCase):
     def test_resolution_is_once_per_preparation(self):
         self.resolver.reset_mock()
         self.prepare("development")
-        self.resolver.assert_called_once_with(self.repo.resolve())
+        self.resolver.assert_called_once_with(self.repo.resolve(), cloud_work=False)
 
     def test_cli_failure_json(self):
         import contextlib
@@ -580,6 +580,166 @@ class GitSelectionTests(unittest.TestCase):
                 patch.object(helper.shutil, "which", return_value=str(self.root)):
             with self.assertRaisesRegex(helper.PreparationError, "inside the checkout"):
                 helper.resolve_git(self.root)
+
+
+class CloudGitSelectionTests(unittest.TestCase):
+    def setUp(self):
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.root = helper.CLOUD_ROOT
+        self.git = Path("/usr/bin/git")
+        self.info = {}
+        self.host = SimpleNamespace(
+            name="posix", environ={"MINILOOT_MAINTENANCE_HOST": "codex-cloud"},
+            getuid=Mock(return_value=1000), geteuid=Mock(return_value=1000),
+            getgid=Mock(return_value=1000), getegid=Mock(return_value=1000),
+            getgroups=Mock(return_value=[]), W_OK=2, X_OK=1, ST_RDONLY=1,
+            access=Mock(side_effect=lambda path, mode, **kw: mode == 1),
+            statvfs=Mock(return_value=SimpleNamespace(f_flag=1)))
+        self.host.supports_effective_ids = {self.host.access}
+        def attributes(path, *args, **kwargs):
+            return self.info.get(path, SimpleNamespace(st_uid=65534, st_gid=65534,
+                                 st_mode=0o100755 if path == self.git else 0o40755))
+        self.stack.enter_context(patch.object(helper, "os", self.host))
+        self.stack.enter_context(patch.object(helper.sys, "platform", "linux"))
+        self.which = self.stack.enter_context(patch.object(helper.shutil, "which", return_value=str(self.git)))
+        self.stack.enter_context(patch.object(Path, "resolve", lambda path, **kw: self.git if path == Path("/bin/git") else path))
+        self.stack.enter_context(patch.object(Path, "stat", attributes))
+        self.maps = self.stack.enter_context(patch.object(Path, "read_text", return_value=" 1000\t0  1\n"))
+        self.run = self.stack.enter_context(patch.object(helper.subprocess, "run", side_effect=AssertionError("Git launched")))
+
+    def reject(self, **kwargs):
+        with self.assertRaises(helper.PreparationError):
+            helper.resolve_git(kwargs.pop("root", self.root), **{"cloud_work": True, **kwargs})
+        self.run.assert_not_called()
+
+    def test_valid_profile_and_no_discovery_subprocess(self):
+        self.assertEqual(helper.resolve_git(self.root, cloud_work=True), str(self.git))
+        self.run.assert_not_called()
+        self.assertEqual(self.maps.call_count, 2)
+        self.assertEqual(self.host.statvfs.call_count, len((self.git, *self.git.parents)))
+
+    def test_no_context_even_with_marker(self):
+        self.reject(cloud_work=False)
+        self.maps.assert_not_called()
+
+    def test_default_direct_call_rejects(self):
+        with self.assertRaises(helper.PreparationError):
+            helper.resolve_git(self.root)
+        self.maps.assert_not_called()
+
+    def test_missing_or_wrong_marker(self):
+        for marker in (None, "local", ""):
+            with self.subTest(marker=marker):
+                self.host.environ = {} if marker is None else {"MINILOOT_MAINTENANCE_HOST": marker}
+                self.reject()
+        self.maps.assert_not_called()
+
+    def test_wrong_root(self):
+        self.reject(root=Path("/workspace/other"))
+        self.maps.assert_not_called()
+
+    def test_wrong_platform(self):
+        with patch.object(helper.sys, "platform", "darwin"):
+            self.reject()
+
+    def test_namespace_missing_unreadable_or_invalid(self):
+        for value in ("", "1000 0", "1000 0 2", "0 0 1", "1000 0 1\n1001 1 1", "x 0 1", "-1000 0 1"):
+            for index in (0, 1):
+                with self.subTest(value=value, index=index):
+                    values = ["1000 0 1", "1000 0 1"]
+                    values[index] = value
+                    self.maps.side_effect = values
+                    self.reject()
+        for error in (FileNotFoundError(), PermissionError(), UnicodeError()):
+            self.maps.side_effect = error
+            self.reject()
+
+    def test_unexpected_process_identities_and_groups(self):
+        for name in ("getuid", "geteuid", "getgid", "getegid", "getgroups"):
+            mock = getattr(self.host, name)
+            mock.return_value = [1000] if name == "getgroups" else 0
+            self.reject()
+            mock.return_value = [] if name == "getgroups" else 1000
+
+    def test_ownership_consistency(self):
+        from types import SimpleNamespace
+        for path in (self.git, self.git.parent, self.git.parents[-1]):
+            for uid, gid in ((1000, 65534), (0, 0), (65534, 0)):
+                with self.subTest(path=path, uid=uid, gid=gid):
+                    self.info[path] = SimpleNamespace(st_uid=uid, st_gid=gid, st_mode=0o100755)
+                    self.reject()
+                    self.info.clear()
+
+    def test_mode_write_bits_on_file_and_ancestors(self):
+        from types import SimpleNamespace
+        for path in (self.git, *self.git.parents):
+            for bit in (0o020, 0o002):
+                self.info[path] = SimpleNamespace(st_uid=65534, st_gid=65534, st_mode=0o100755 | bit)
+                self.reject()
+                self.info.clear()
+
+    def test_effective_write_on_file_and_ancestors(self):
+        for target in (self.git, *self.git.parents):
+            self.host.access.side_effect = lambda path, mode, **kw: mode == 1 or path == target
+            self.reject()
+
+    def test_read_write_mount_at_each_path(self):
+        from types import SimpleNamespace
+        for target in (self.git, *self.git.parents):
+            self.host.statvfs.side_effect = lambda path: SimpleNamespace(f_flag=0 if path == target else 1)
+            self.reject()
+
+    def test_mount_and_permission_query_failures(self):
+        for mock in (self.host.statvfs, self.host.access):
+            for error in (OSError("unavailable"), NotImplementedError()):
+                mock.side_effect = error
+                self.reject()
+            mock.side_effect = None
+
+    def test_missing_effective_ids_or_mount_api(self):
+        self.host.supports_effective_ids = set()
+        self.reject()
+        self.host.supports_effective_ids = {self.host.access}
+        del self.host.statvfs
+        self.reject()
+
+    def test_symlink_bin_to_usr_bin(self):
+        self.which.return_value = "/bin/git"
+        self.assertEqual(helper.resolve_git(self.root, cloud_work=True), str(self.git))
+
+    def test_symlink_to_unapproved_target(self):
+        with patch.object(Path, "resolve", return_value=Path("/tmp/git")):
+            self.reject()
+
+    def test_checkout_exclusion(self):
+        self.reject(root=Path("/usr"))
+
+    def test_regular_and_effectively_executable_required(self):
+        from types import SimpleNamespace
+        for mode in (0o40755, 0o100644):
+            self.info[self.git] = SimpleNamespace(st_uid=65534, st_gid=65534, st_mode=mode)
+            self.reject()
+        self.info.clear()
+        self.host.access.side_effect = lambda *args, **kwargs: False
+        self.reject()
+
+    def test_root_policy_does_not_read_namespace(self):
+        from types import SimpleNamespace
+        for path in (self.git, *self.git.parents):
+            self.info[path] = SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100755)
+        self.assertEqual(helper.resolve_git(self.root), str(self.git))
+        self.maps.assert_not_called()
+        self.host.statvfs.assert_not_called()
+
+    def test_invalid_selection_precedes_preparation_git(self):
+        self.host.environ.clear()
+        with self.assertRaises(helper.PreparationError):
+            helper.prepare(cwd=self.root, cloud_work=True)
+        self.run.assert_not_called()
 
 
 if __name__ == "__main__":

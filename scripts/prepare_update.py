@@ -14,13 +14,54 @@ UPSTREAM = "https://github.com/Vladinator/wow-addon-miniloot.git"
 WINDOWS_ROOT = Path(r"C:\Users\jonat\Desktop\MiniLoot\Github\wow-addon-miniloot")
 WINDOWS_GIT = Path(r"C:\Program Files\Git\cmd\git.exe")
 LINUX_GIT_PATH = "/usr/bin:/bin:/usr/local/bin"
+CLOUD_ROOT = Path("/workspace/wow-addon-miniloot")
+
+
+def validate_cloud_git(root, resolved, attributes, cloud_work):
+    """Validate the observed managed Cloud namespace; host identity is agent-attested."""
+    def reject(reason):
+        raise PreparationError("Trusted Cloud Git rejected: " + reason)
+
+    if (not cloud_work or os.environ.get("MINILOOT_MAINTENANCE_HOST") != "codex-cloud"
+            or root != CLOUD_ROOT or not sys.platform.startswith("linux")):
+        reject("explicit Cloud authorization and canonical checkout required")
+    approved = tuple(Path(value) for value in LINUX_GIT_PATH.split(":"))
+    if resolved.parent not in approved:
+        reject("resolved executable outside approved system directories")
+    required = ("getuid", "geteuid", "getgid", "getegid", "getgroups", "statvfs", "ST_RDONLY",
+                "supports_effective_ids", "access")
+    if any(not hasattr(os, name) for name in required) or os.access not in os.supports_effective_ids:
+        reject("effective permission or filesystem APIs unavailable")
+    try:
+        if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (1000, 1000, 1000, 1000) or os.getgroups():
+            reject("unexpected process identities or supplementary groups")
+        for name in ("uid_map", "gid_map"):
+            lines = Path("/proc/self", name).read_text(encoding="ascii").splitlines()
+            rows = [line.split() for line in lines]
+            if (len(rows) != 1 or len(rows[0]) != 3
+                    or any(re.fullmatch(r"[0-9]+", field) is None for field in rows[0])
+                    or tuple(map(int, rows[0])) != (1000, 0, 1)):
+                reject("invalid or unsupported " + name)
+        for path, info in attributes:
+            if (info.st_uid, info.st_gid) != (65534, 65534):
+                reject("inconsistent remapped ownership")
+            if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                reject("group/world-writable path")
+            if os.access(path, os.W_OK, effective_ids=True):
+                reject("effectively writable path")
+            if not os.statvfs(path).f_flag & os.ST_RDONLY:
+                reject("path is not on a read-only mount")
+        if not os.access(resolved, os.X_OK, effective_ids=True):
+            reject("executable lacks effective execution permission")
+    except (OSError, ValueError, UnicodeError, NotImplementedError, TypeError, AttributeError) as error:
+        reject("required namespace/filesystem evidence unavailable: " + diagnostic(error))
 
 
 class PreparationError(RuntimeError):
     pass
 
 
-def resolve_git(root):
+def resolve_git(root, *, cloud_work=False):
     """Use the managed Windows install or a root-owned Linux system executable."""
     try:
         if os.name == "nt":
@@ -42,10 +83,14 @@ def resolve_git(root):
         else:
             if not resolved.stat().st_mode & 0o111:
                 raise PreparationError("Trusted Git is not executable")
-            for path in (resolved, *resolved.parents):
-                info = path.stat()
-                if info.st_uid != 0 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            attributes = [(path, path.stat()) for path in (resolved, *resolved.parents)]
+            for path, info in attributes:
+                if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
                     raise PreparationError("Trusted Linux Git path must be root-owned and not group/world-writable")
+            if any(info.st_uid != 0 for path, info in attributes):
+                if any(info.st_uid != 65534 for path, info in attributes):
+                    raise PreparationError("Trusted Linux Git path must be root-owned and not group/world-writable")
+                validate_cloud_git(root, resolved, attributes, cloud_work)
         return str(resolved)
     except OSError as error:
         raise PreparationError("Trusted Git executable unavailable: " + diagnostic(error)) from None
@@ -80,7 +125,7 @@ def prepare(mode="update", cloud_work=False, cwd=None):
         return result.stdout.strip(), result.returncode
 
     root = Path(cwd or Path.cwd()).resolve()
-    executable = resolve_git(root)
+    executable = resolve_git(root, cloud_work=cloud_work)
     actual = Path(git("rev-parse", "--show-toplevel")[0]).resolve()
     if actual != root or (os.name == "nt" and actual != WINDOWS_ROOT.resolve()):
         raise PreparationError("Invalid repository root; use the actual checkout root")
