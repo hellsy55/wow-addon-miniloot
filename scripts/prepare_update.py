@@ -111,18 +111,19 @@ def diagnostic(value):
 
 
 def prepare(mode="update", cloud_work=False, cwd=None):
-    def git(*args, allowed=(0,)):
+    def git(*args, allowed=(0,), raw=False):
         command = "git " + " ".join(args)
         try:
-            result = subprocess.run([executable, "-C", str(root), *args], capture_output=True, text=True)
+            result = subprocess.run([executable, "-C", str(root), *args], capture_output=True, text=not raw)
         except OSError as error:
             raise PreparationError("Could not start " + diagnostic(command) + ": " + diagnostic(error)) from None
-        if result.returncode not in allowed:
-            details = [name + "=" + diagnostic(value) for name, value in
-                       (("stderr", result.stderr), ("stdout", result.stdout)) if value.strip()]
+        if result.returncode not in allowed or (raw and result.returncode == 1 and (result.stdout or result.stderr)):
+            details = [name + "=" + diagnostic(value.decode("utf-8", errors="replace") if raw else value)
+                       for name, value in (("stderr", result.stderr), ("stdout", result.stdout))
+                       if (value if raw else value.strip())]
             raise PreparationError(diagnostic(command) + " exited " + str(result.returncode) + ": "
                                    + ("; ".join(details) or "stdout and stderr are empty"))
-        return result.stdout.strip(), result.returncode
+        return (result.stdout if raw else result.stdout.strip()), result.returncode
 
     root = Path(cwd or Path.cwd()).resolve()
     executable = resolve_git(root, cloud_work=cloud_work)
@@ -185,10 +186,26 @@ def prepare(mode="update", cloud_work=False, cwd=None):
     # All history gates precede branch creation, tracking changes, and checkout.
     for name in missing:
         git("branch", "--no-track", name, "refs/remotes/origin/" + name)
-    for name in names:
-        # --track cannot map a branch excluded by remote.origin.fetch.
-        git("config", "--local", "branch." + name + ".remote", "origin")
-        git("config", "--local", "branch." + name + ".merge", "refs/heads/" + name)
+    tracking = {"branch." + name + suffix: value for name in names for suffix, value in
+                ((".remote", "origin"), (".merge", "refs/heads/" + name))}
+    pattern = r"^branch\.(" + "|".join(names) + r")\.(remote|merge)$"
+    output, code = git("config", "--local", "--no-includes", "--null", "--get-regexp", pattern,
+                       allowed=(0, 1), raw=True)
+    values = {key.encode("ascii"): [] for key in tracking}
+    if code == 0:
+        if not output or not output.endswith(b"\0"):
+            raise PreparationError("Invalid local tracking configuration response")
+        for record in output[:-1].split(b"\0"):
+            key, separator, value = record.partition(b"\n")
+            if not separator or key not in values:
+                raise PreparationError("Invalid local tracking configuration response")
+            values[key].append(value)
+        if any(len(items) > 1 for items in values.values()):
+            raise PreparationError("Multiple values for local tracking configuration")
+    # Validate every record before writing; --track cannot map an excluded refspec.
+    for key, expected_value in tracking.items():
+        if values[key.encode("ascii")] != [expected_value.encode("ascii")]:
+            git("config", "--local", key, expected_value)
     if branch == "work":
         git("switch", "new-features")
     refs = ["origin/" + name for name in names]

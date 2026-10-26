@@ -93,13 +93,20 @@ class PreparationTests(unittest.TestCase):
         self.assertFalse({"merge", "reset", "commit", "push"} & {c[0] for c in self.commands})
 
     def test_healthy_invocation_counts(self):
-        for mode, expected in (("update", 23), ("development", 13)):
+        for name in ("new-features", "master"):
+            self.g("config", "branch." + name + ".remote", "origin")
+            self.g("config", "branch." + name + ".merge", "refs/heads/" + name)
+        for mode, expected in (("update", 20), ("development", 12)):
             with self.subTest(mode=mode):
                 self.commands.clear()
                 self.prepare(mode)
                 self.assertEqual(len(self.commands), expected)
                 self.assertEqual(sum(c[0] == "for-each-ref" for c in self.commands), 1)
                 self.assertEqual(self.commands.count(["remote"]), int(mode == "update"))
+                self.assertEqual(sum(c[:4] == ["config", "--local", "--no-includes", "--null"]
+                                     for c in self.commands), 1)
+                self.assertFalse(any(c[:2] == ["config", "--local"] and "--get-regexp" not in c
+                                     for c in self.commands))
                 for flag in ([], ["--push"]):
                     self.assertIn(["remote", "get-url", *flag, "--all", "origin"], self.commands)
 
@@ -479,6 +486,218 @@ class PreparationTests(unittest.TestCase):
                 contextlib.redirect_stdout(output):
             self.assertEqual(helper.main(), 1)
         self.assertEqual(json.loads(output.getvalue()), {"error": "failed"})
+
+    def set_tracking(self, names=("new-features",)):
+        for name in names:
+            self.g("config", "branch." + name + ".remote", "origin")
+            self.g("config", "branch." + name + ".merge", "refs/heads/" + name)
+
+    def tracking_writes(self):
+        return [c for c in self.commands if c[:2] == ["config", "--local"] and c[2].startswith("branch.")]
+
+    def test_tracking_missing_development_counts(self):
+        result = self.prepare("development")
+        self.assertEqual(len(self.commands), 14)
+        self.assertEqual(len(self.tracking_writes()), 2)
+        self.assertEqual(result["created"], [])
+
+    def test_tracking_missing_update_counts(self):
+        self.prepare("update")
+        self.assertEqual(len(self.commands), 24)
+        self.assertEqual(len(self.tracking_writes()), 4)
+
+    def test_tracking_incorrect_counts_in_both_modes(self):
+        for mode, names, count in (("development", ("new-features",), 14),
+                                   ("update", ("new-features", "master"), 24)):
+            with self.subTest(mode=mode):
+                for name in names:
+                    self.g("config", "branch." + name + ".remote", "wrong")
+                    self.g("config", "branch." + name + ".merge", "refs/heads/wrong")
+                self.commands.clear()
+                self.prepare(mode)
+                self.assertEqual(len(self.commands), count)
+                self.assertEqual(len(self.tracking_writes()), 2 * len(names))
+                for name in names:
+                    self.assertEqual(self.g("config", "branch." + name + ".remote"), "origin")
+                    self.assertEqual(self.g("config", "branch." + name + ".merge"), "refs/heads/" + name)
+
+    def test_tracking_single_missing_or_incorrect_key(self):
+        for suffix, expected in (("remote", "origin"), ("merge", "refs/heads/new-features")):
+            for value in (None, "wrong", "", "origin\nextra", "origin\r\nextra"):
+                with self.subTest(suffix=suffix, value=value):
+                    self.set_tracking()
+                    key = "branch.new-features." + suffix
+                    if value is None:
+                        self.g("config", "--unset", key)
+                    else:
+                        self.g("config", key, value)
+                    self.commands.clear()
+                    self.prepare("development")
+                    self.assertEqual(len(self.commands), 13)
+                    self.assertEqual(self.tracking_writes(), [["config", "--local", key, expected]])
+
+    def test_tracking_cloud_work_correct_counts(self):
+        self.g("switch", "-c", "work")
+        work = self.g("rev-parse", "work")
+        master = self.g("rev-parse", "master")
+        self.set_tracking()
+        self.prepare("development", cloud=True)
+        self.assertEqual(len(self.commands), 14)
+        self.assertEqual(self.tracking_writes(), [])
+        self.assertEqual(self.g("rev-parse", "work"), work)
+        self.assertEqual(self.g("rev-parse", "master"), master)
+        self.assertFalse(any("master" in " ".join(c) or "upstream" in " ".join(c) for c in self.commands))
+
+    def test_tracking_new_branch_and_residual_configuration(self):
+        self.work()
+        work = self.g("rev-parse", "work")
+        for residual in (None, "wrong", "origin"):
+            with self.subTest(residual=residual):
+                if residual is not None:
+                    self.g("config", "branch.new-features.remote", residual)
+                    self.g("config", "branch.new-features.merge", "refs/heads/new-features")
+                self.commands.clear()
+                result = self.prepare("development", cloud=True)
+                self.assertEqual(result["created"], ["new-features"])
+                self.assertIn(["branch", "--no-track", "new-features", "refs/remotes/origin/new-features"], self.commands)
+                self.assertEqual(len(self.tracking_writes()), 2 if residual is None else int(residual != "origin"))
+                self.assertEqual(self.g("rev-parse", "work"), work)
+                self.g("switch", "work")
+                self.g("branch", "-D", "new-features")
+
+    def test_tracking_duplicates_rejected_before_any_write(self):
+        key = "branch.new-features.merge"
+        for values in (("refs/heads/new-features", "refs/heads/new-features"),
+                       ("refs/heads/new-features", "refs/heads/wrong")):
+            with self.subTest(values=values):
+                self.g("config", "--add", key, values[0])
+                self.g("config", "--add", key, values[1])
+                before = (self.repo / ".git" / "config").read_bytes()
+                self.commands.clear()
+                with self.assertRaisesRegex(helper.PreparationError, "Multiple values"):
+                    self.prepare("development")
+                self.assertEqual(self.tracking_writes(), [])
+                self.assertEqual((self.repo / ".git" / "config").read_bytes(), before)
+                self.g("config", "--remove-section", "branch.new-features")
+
+    def query_response(self, code, output, error=b""):
+        def response(command, **kwargs):
+            if "--get-regexp" in command:
+                self.assertFalse(kwargs["text"])
+                self.commands.append(command[3:])
+                return subprocess.CompletedProcess(command, code, output, error)
+            return self.intercept(command, **kwargs)
+        return patch.object(helper.subprocess, "run", side_effect=response)
+
+    def test_tracking_invalid_raw_records(self):
+        cases = (b"", b"\0", b"branch.new-features.remote\norigin", b"branch.new-features.remote\0",
+                 b"branch.new-features.remote\norigin\0\0", b"\norigin\0", b"unexpected\norigin\0",
+                 b"branch.master.remote\norigin\0", b"branch.new-features.remote\norigin\0truncated",
+                 b"branch.new-features.remote\norigin\0\n", b"branch.new-features.remote\norigin\0 \0")
+        for output in cases:
+            with self.subTest(output=output):
+                self.commands.clear()
+                with self.query_response(0, output), self.assertRaisesRegex(helper.PreparationError, "Invalid local tracking"):
+                    self.prepare("development")
+                self.assertEqual(self.tracking_writes(), [])
+                self.assertEqual(self.commands[-1][0], "config")
+
+    def test_tracking_raw_values_preserved(self):
+        for value in (b"", b"origin\n", b" origin", b"origin\r\nextra", b"origin\nextra", b"\xff"):
+            with self.subTest(value=value):
+                self.commands.clear()
+                output = (b"branch.new-features.merge\nrefs/heads/new-features\0"
+                          b"branch.new-features.remote\n" + value + b"\0")
+                with self.query_response(0, output):
+                    self.prepare("development")
+                self.assertEqual(self.tracking_writes(), [["config", "--local", "branch.new-features.remote", "origin"]])
+
+    def test_tracking_valid_nul_records_in_any_order(self):
+        output = (b"branch.new-features.merge\nrefs/heads/new-features\0"
+                  b"branch.new-features.remote\norigin\0")
+        with self.query_response(0, output):
+            self.prepare("development")
+        self.assertEqual(self.tracking_writes(), [])
+        self.assertEqual(len(self.commands), 12)
+
+    def test_tracking_raw_duplicate_rejected_after_other_missing_key(self):
+        output = b"branch.new-features.merge\nrefs/heads/new-features\0" * 2
+        with self.query_response(0, output), self.assertRaisesRegex(helper.PreparationError, "Multiple values"):
+            self.prepare("development")
+        self.assertEqual(self.tracking_writes(), [])
+
+    def test_tracking_exit_one_empty_is_missing(self):
+        with self.query_response(1, b""):
+            self.prepare("development")
+        self.assertEqual(len(self.tracking_writes()), 2)
+        self.assertEqual(len(self.commands), 14)
+
+    def test_tracking_query_errors_stop_and_redact(self):
+        cases = ((1, b" ", b""), (1, b"", b"\n"), (1, b"unexpected", b""),
+                 (1, b"", b"failure"), (128, b"", b""), (7, b"out", b"err"),
+                 (128, b"token=private", b"https://user:secret@github.com/repo?key=hidden"))
+        for code, out, err in cases:
+            with self.subTest(code=code, out=out, err=err):
+                self.commands.clear()
+                with self.query_response(code, out, err), self.assertRaises(helper.PreparationError) as caught:
+                    self.prepare("development")
+                message = str(caught.exception)
+                self.assertIn("exited " + str(code), message)
+                for secret in ("private", "user:secret", "hidden"):
+                    self.assertNotIn(secret, message)
+                self.assertEqual(self.tracking_writes(), [])
+                self.assertNotIn("for-each-ref", [c[0] for c in self.commands])
+
+    def test_tracking_query_launch_failure(self):
+        def response(command, **kwargs):
+            if "--get-regexp" in command:
+                raise OSError("query unavailable")
+            return self.intercept(command, **kwargs)
+        with patch.object(helper.subprocess, "run", side_effect=response):
+            with self.assertRaisesRegex(helper.PreparationError, "Could not start.*git config"):
+                self.prepare("development")
+        self.assertEqual(self.tracking_writes(), [])
+        self.assertNotIn("for-each-ref", [c[0] for c in self.commands])
+
+    def test_tracking_write_failures_stop_before_switch(self):
+        self.g("switch", "-c", "work")
+        for fail_at in (1, 2):
+            with self.subTest(fail_at=fail_at):
+                self.commands.clear()
+                writes = []
+                def response(command, **kwargs):
+                    if command[3:5] == ["config", "--local"] and "--get-regexp" not in command:
+                        writes.append(command[5])
+                        self.commands.append(command[3:])
+                        return subprocess.CompletedProcess(command, 128 if len(writes) == fail_at else 0, "", "write failure")
+                    return self.intercept(command, **kwargs)
+                with patch.object(helper.subprocess, "run", side_effect=response):
+                    with self.assertRaisesRegex(helper.PreparationError, "exited 128.*write failure"):
+                        self.prepare("development", cloud=True)
+                self.assertEqual(len(writes), fail_at)
+                self.assertEqual(self.g("branch", "--show-current"), "work")
+                self.assertFalse({"switch", "for-each-ref"} & {c[0] for c in self.commands})
+
+    def test_tracking_outside_local_scope_untouched(self):
+        external = '[branch "new-features"]\n remote = external\n merge = refs/heads/external\n'
+        global_config = self.base / "global.config"
+        include = self.base / "included.config"
+        worktree_config = self.repo / ".git" / "config.worktree"
+        for path in (global_config, include, worktree_config):
+            path.write_text(external, encoding="utf-8")
+        self.g("config", "include.path", str(include))
+        self.g("config", "extensions.worktreeConfig", "true")
+        before = {path: path.read_bytes() for path in (global_config, include, worktree_config)}
+        with patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(global_config), "GIT_CONFIG_COUNT": "1",
+                                     "GIT_CONFIG_KEY_0": "branch.new-features.remote", "GIT_CONFIG_VALUE_0": "override"}):
+            self.prepare("development")
+        self.assertEqual(self.g("config", "--local", "--no-includes", "branch.new-features.remote"), "origin")
+        self.assertEqual(len(self.tracking_writes()), 2)
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content)
+        query = [c for c in self.commands if "--get-regexp" in c]
+        self.assertEqual(query, [["config", "--local", "--no-includes", "--null", "--get-regexp",
+                                 r"^branch\.(new-features)\.(remote|merge)$"]])
 
 
 class DiagnosticTests(unittest.TestCase):
