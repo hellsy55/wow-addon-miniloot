@@ -99,7 +99,9 @@ post-generation channel, never a prerequisite for update, commit, or push.
 
 ## Final report
 
-For the target/installer, report in Portuguese:
+For the target/installer, report in Portuguese, following the update skill's
+[commit link rules](../skills/miniloot-update/SKILL.md#commit-links) for the
+baseline and final SHAs:
 
 - Target when applicable, initial version if available, initial subject and short
   SHA, final version if available, and final subject and short SHA.
