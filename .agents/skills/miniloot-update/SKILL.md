@@ -11,6 +11,8 @@ Read [initial setup](references/initial-setup.md) only for missing clone/configu
 
 Report branches, incoming upstream range when present, human resolutions and publication compactly in Portuguese. Verify origin/new-features equals the approved result. Only after ALL synchronization succeeds or a complete no-op is proven, use the frozen capabilities to follow AGENTS.md's completion routing, including its exact local Windows menu and waiting for an explicit choice. Load the install skill only after valid installation authorization, never during update preparation.
 
+On positively identified Codex Cloud, follow [Cloud update delivery](../../references/cloud-update-delivery.md) for normal update commands. Load it before modifying the installable target and apply its delivery rules after successful synchronization and verification.
+
 ## Commit links
 
 Reuse the prepared Git `local_tips` as the initial branch tips and obtain the final tips from Git. In update reports, render each published initial or final commit as `[SHORT_SHA](https://github.com/hellsy55/wow-addon-miniloot/commit/FULL_SHA)`, using its Git abbreviation and full SHA. Use the workflow's verified origin refs to establish publication. For a no-op, the same commit may serve as both endpoints. Show any unpublished or unverified tip as a plain abbreviated SHA with its status, and report each branch independently if publication is incomplete. Keep commit links separate from artifact download and Google Drive links.

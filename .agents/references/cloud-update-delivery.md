@@ -1,8 +1,7 @@
 # Cloud update delivery
 
-Load this reference only when a Cloud prompt explicitly requests it after the
-user selects a workflow that actually performs an update. It adds delivery rules;
-it never replaces, changes, or bypasses [AGENTS.md](../../AGENTS.md) or the
+Load this reference for normal update commands on positively identified Codex
+Cloud. It adds delivery rules and preserves [AGENTS.md](../../AGENTS.md) and the
 [update skill](../skills/miniloot-update/SKILL.md). Read it before the first
 modification of the installable target to capture the initial state.
 
@@ -22,18 +21,22 @@ update do not automatically receive an installer or update summary.
 - Record auxiliary/mirror branches if the workflow needs them; they never replace
   the installable base.
 
-## Incremental installer
+## Complete installer
 
 Only after the normal workflow is genuinely complete:
 
-- Compute the net difference from the recorded initial installable state to the
-  final installable state. Use only final file contents; include necessary new
-  files and exclude files that end identical to the base or remain unchanged.
-- Include only files belonging to the installed addon. Exclude temporary files,
-  tests, operational scripts/helpers, Codex/Cloud tooling, operational
-  documentation, and packaging artifacts outside the installed addon.
-- Generate exactly one incremental installer, never a full distribution. Do not
-  include entire modules/addons merely to complete a distribution.
+- Compare the recorded initial and final installable states only to determine
+  installer eligibility, summarize net functional changes, and identify required
+  manual removals.
+- Generate exactly one installer ZIP when the installed distribution has a net
+  addition, modification, or deletion, including deletion-only updates, provided
+  the final distribution is valid and non-empty. Generate no ZIP for a no-op or
+  an operational-only change. Do not generate a commit ZIP.
+- Package the complete final `new-features` distribution using final file
+  contents, including unchanged files needed for a clean installation. Include
+  only files belonging to the installed addon. Exclude temporary files, caches,
+  tests, development tools, operational scripts/helpers, Codex/Cloud tooling,
+  operational documentation, and other non-installable items.
 - Map repository-root files into `MiniLoot/`, for example `MiniLoot.lua` to
   `MiniLoot/MiniLoot.lua` and `Modules/Example.lua` to
   `MiniLoot/Modules/Example.lua`. Add no outer wrapper directory.
@@ -41,8 +44,9 @@ Only after the normal workflow is genuinely complete:
   existing library boundary in AGENTS.md.
 - End the ZIP name with `_installer.zip`; prefer a reliable final addon version,
   otherwise use the final short SHA.
-- A ZIP cannot represent deletions: list required manual removal paths separately
-  in Portuguese. Never install, extract, or copy the ZIP into the WoW directory.
+- Extracting the complete ZIP over an existing installation leaves obsolete files
+  in place. List required manual removal paths separately in Portuguese. Never
+  install, extract, or copy the ZIP into the WoW directory.
 
 ## Update summary
 
@@ -107,8 +111,8 @@ baseline and final SHAs:
   SHA, final version if available, and final subject and short SHA.
 - The `initial -> final` transition, ZIP filename, and number of packaged files.
 - Required manual deletions, or explicitly none.
-- Confirmation that the ZIP contains only the final net difference and that no
-  files were installed in the WoW directory.
+- Confirmation that the ZIP contains the complete final installable distribution,
+  including unchanged files, and that no files were installed in the WoW directory.
 - For each ZIP with an attempted Drive upload, compactly report its filename,
   local size, local SHA-256 when already calculated or inexpensive to calculate,
   `Google Drive: OK` only after successful readback (otherwise the actual error),
