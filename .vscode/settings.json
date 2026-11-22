@@ -14,6 +14,9 @@
     "Lua.workspace.library": [
         "~\\.vscode\\extensions\\ketho.wow-api-0.22.3\\Annotations\\Core"
     ],
+    "Lua.diagnostics.disable": [
+        "toc-file-name"
+    ],
     "Lua.diagnostics.globals": [
         "ACTION_SWING",
         "BattlePetTooltip",
@@ -21,8 +24,8 @@
         "ChatFrame_AddMessageEventFilter",
         "ChatFrame_RemoveMessageEventFilter",
         "ChatFrameUtil",
+        "Chattynator",
         "COMBATLOG_UNKNOWN_UNIT",
-        "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED",
         "COPPER_AMOUNT",
         "COPPER_PER_GOLD",
         "COPPER_PER_SILVER",
@@ -30,6 +33,7 @@
         "CreateScrollBoxLinearView",
         "DEATH_RECAP_UNAVAILABLE",
         "DECIMAL_SEPERATOR",
+        "DEFAULT_CHAT_FRAME",
         "FloatingGarrisonFollower_Toggle",
         "FloatingGarrisonFollowerAbility_Toggle",
         "FloatingGarrisonFollowerAbilityTooltip",
@@ -42,12 +46,14 @@
         "GOLD_AMOUNT",
         "HONOR",
         "InterfaceOptionsFramePanelContainer",
+        "ITEM_QUALITY_COLORS",
         "ITEM_STARTS_QUEST",
         "ITEM_UNIQUE",
         "ITEM_UNIQUE_EQUIPPABLE",
         "LARGE_NUMBER_SEPERATOR",
-        "LinkUtil",
         "LOOT",
+        "NO",
+        "NUM_CHAT_WINDOWS",
         "ProxySettingMixin",
         "SCROLLING_MESSAGE_FRAME_INSERT_MODE_BOTTOM",
         "ScrollUtil",
@@ -60,11 +66,11 @@
         "TEXT_MODE_A_STRING_RESULT_OVERKILLING",
         "TEXT_MODE_A_STRING_RESULT_RESIST",
         "TRANSMOGRIFY_TOOLTIP_APPEARANCE_UNKNOWN",
+        "WOW_PROJECT_CAMELOT",
+        "WOW_PROJECT_MISTS_CLASSIC",
         "XP",
+        "YES",
         "YOU",
         "YOU_LOOT_MONEY"
-    ],
-    "Lua.diagnostics.disable": [
-        "assign-type-mismatch"
     ]
 }

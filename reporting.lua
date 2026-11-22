@@ -30,7 +30,7 @@ local SyntheticSelfRollMessage = {
 
 local rollOnLootHooked = false
 local confirmLootRollHooked = false
-local syntheticSelfRollHandler = nil
+local syntheticResultHandler = nil
 local suppressRawTransmogMessages = 0
 local suppressRawTransmogUntil = 0
 
@@ -76,7 +76,7 @@ local function PrunePendingSelfRolls()
     end
 end
 
-local function CanOutputSyntheticSelfRoll(result, message)
+local function CanOutputSyntheticResult(result, message)
     if not db.Enabled then
         return false
     end
@@ -103,8 +103,8 @@ local function EmitPendingTransmogRoll(rollID)
                 Type = "YouTransmog",
                 Link = link,
             }
-            if syntheticSelfRollHandler and CanOutputSyntheticSelfRoll(result, SyntheticSelfRollMessage) then
-                syntheticSelfRollHandler(result, SyntheticSelfRollMessage)
+            if syntheticResultHandler and CanOutputSyntheticResult(result, SyntheticSelfRollMessage) then
+                syntheticResultHandler(result, SyntheticSelfRollMessage)
                 suppressRawTransmogMessages = suppressRawTransmogMessages + 1
                 suppressRawTransmogUntil = GetTime() + 2
             end
@@ -189,11 +189,16 @@ end
 
 ---@param text string
 ---@param transmogOnly boolean
+---@param preview boolean
 ---@return table?, number?
-local function FindPendingSelfRoll(text, transmogOnly)
-    PrunePendingSelfRolls()
+local function FindPendingSelfRoll(text, transmogOnly, preview)
+    if not preview then
+        PrunePendingSelfRolls()
+    end
+    local now = GetTime()
     for i, pending in ipairs(PendingSelfRolls) do
-        if (not transmogOnly or pending.Type == "YouTransmog") and
+        if now - pending.time <= PENDING_SELF_ROLL_TTL and
+            (not transmogOnly or pending.Type == "YouTransmog") and
             (transmogOnly or (pending.Link and TextContainsLootLink(text, pending.Link))) then
             return pending, i
         end
@@ -202,8 +207,9 @@ end
 
 ---@param event WowEvent
 ---@param text string
+---@param preview boolean
 ---@return MiniLootMessageFormatSimpleParserResults?, MiniLootMessage?
-local function ProcessPendingSelfRoll(event, text)
+local function ProcessPendingSelfRoll(event, text, preview)
     if event ~= "CHAT_MSG_LOOT" or type(text) ~= "string" or not IsSafeValue(text) then
         return
     end
@@ -216,20 +222,25 @@ local function ProcessPendingSelfRoll(event, text)
     -- the loot-history ID as a tiny raw string, so pair it with the oldest
     -- pending Transmog click instead of assuming that ID is the rollID.
     local isRawLootHistoryID = #text <= 4 and not text:find("|", 1, true)
-    local pending, index = FindPendingSelfRoll(text, isRawLootHistoryID)
+    local pending, index = FindPendingSelfRoll(text, isRawLootHistoryID, preview)
     if not pending then
         return
     end
-    table.remove(PendingSelfRolls, index)
+    if not preview then
+        table.remove(PendingSelfRolls, index)
+    end
 
-    local link = pending.Link or GetCachedLootRollLink(pending.rollID)
+    local link = pending.Link or LootRollLinks[pending.rollID]
+    if not link and not preview then
+        link = GetCachedLootRollLink(pending.rollID)
+    end
     if not link then
         return
     end
     return {
         Type = pending.Type,
         Link = link,
-        Value = lootHistoryID,
+        LootHistory = lootHistoryID,
     }, SyntheticSelfRollMessage
 end
 
@@ -251,6 +262,28 @@ end
 ---@type MiniLootNSEventCallbackResult
 local ProcessChatEvent
 
+-- Key verified policies by "<interface>:<build>". Add an entry only with a
+-- client trace that establishes whether quest XP is reported natively.
+---@type table<string, "native"|"turn-in">
+local questExperienceSourceByBuild = {}
+local questExperienceMessage = { group = MiniLootMessageGroup.Experience }
+
+local function GetQuestExperienceSource()
+    local _, build, _, interface = GetBuildInfo()
+    if build and interface then
+        return questExperienceSourceByBuild[interface .. ":" .. build]
+    end
+end
+
+local useQuestTurnInExperience = GetQuestExperienceSource() ~= "native"
+
+local function RecordQuestExperience(xp)
+    local result = { Type = "Experience", Value = xp }
+    if syntheticResultHandler and CanOutputSyntheticResult(result, questExperienceMessage) then
+        syntheticResultHandler(result, questExperienceMessage)
+    end
+end
+
 ---@type table<WowEvent, MiniLootNSEventCallbackResult>
 local EventHandlers = {
     START_LOOT_ROLL = function(event, rollID)
@@ -270,11 +303,12 @@ local EventHandlers = {
     QUEST_TURNED_IN = function(event, ...)
         ---@type number?, number?, number?
         local questID, xp, money = ...
-        if xp and xp > 0 then
-            return ProcessChatEvent("CHAT_MSG_COMBAT_XP_GAIN", format(COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED, xp))
+        if useQuestTurnInExperience and type(xp) == "number" and IsSafeValue(xp) and xp > 0 then
+            RecordQuestExperience(xp)
         end
-        if money and money > 0 then
-            return ProcessChatEvent("CHAT_MSG_MONEY", format(YOU_LOOT_MONEY, C_CurrencyInfo.GetCoinText(money)))
+        local coinText = C_CurrencyInfo and C_CurrencyInfo.GetCoinText or GetCoinText
+        if money and money > 0 and coinText and type(YOU_LOOT_MONEY) == "string" then
+            return ProcessChatEvent("CHAT_MSG_MONEY", format(YOU_LOOT_MONEY, coinText(money)))
         end
     end,
 }
@@ -333,22 +367,45 @@ local function UnregisterChatEvents(onChatEvent)
     end
 end
 
----@type MiniLootNSEventCallbackResult
-function ProcessChatEvent(event, ...)
+---Registers the chat events directly on the frame. Used when a chat addon replaces the default chat frames and we can't rely on the message event filters.
+---@param frame MiniLootNSEventFrame
+local function RegisterFrameChatEvents(frame)
+    for _, event in ipairs(MessageEvents) do
+        pcall(frame.RegisterEvent, frame, event)
+    end
+end
+
+---@param frame MiniLootNSEventFrame
+local function UnregisterFrameChatEvents(frame)
+    for _, event in ipairs(MessageEvents) do
+        pcall(frame.UnregisterEvent, frame, event)
+    end
+end
+
+---@param preview boolean
+---@param event WowEvent
+---@param ... any
+---@return MiniLootMessageFormatSimpleParserResults?, MiniLootMessage?, boolean?
+local function ResolveChatEvent(preview, event, ...)
     local text = ...
-    if suppressRawTransmogMessages > 0 and GetTime() > suppressRawTransmogUntil then
+    local suppressRaw = suppressRawTransmogMessages > 0 and GetTime() <= suppressRawTransmogUntil
+    if not preview and not suppressRaw then
         suppressRawTransmogMessages = 0
     end
-    if event == "CHAT_MSG_LOOT" and suppressRawTransmogMessages > 0 and type(text) == "string" and IsSafeValue(text) and #text > 0 and #text <= 4 and not text:find("|", 1, true) then
-        suppressRawTransmogMessages = suppressRawTransmogMessages - 1
+    if event == "CHAT_MSG_LOOT" and suppressRaw and type(text) == "string" and IsSafeValue(text) and #text > 0 and #text <= 4 and not text:find("|", 1, true) then
+        if not preview then
+            suppressRawTransmogMessages = suppressRawTransmogMessages - 1
+        end
         return nil, nil, true
     end
 
     local result, message = ProcessChatMessage(event, ...)
     if result then
-        ClearPendingSelfRoll(result, message)
+        if not preview then
+            ClearPendingSelfRoll(result, message)
+        end
     else
-        result, message = ProcessPendingSelfRoll(event, text)
+        result, message = ProcessPendingSelfRoll(event, text, preview)
     end
     if not result or not message then
         return
@@ -367,11 +424,25 @@ function ProcessChatEvent(event, ...)
     return result, message
 end
 
----@class MiniLootNSReporting
-local function SetSyntheticSelfRollHandler(handler)
-    syntheticSelfRollHandler = handler
+function ProcessChatEvent(event, ...)
+    return ResolveChatEvent(false, event, ...)
 end
 
+local function IsChatEventPreviewCacheable(event, text)
+    -- A preview can depend on a pending roll or a short-lived raw suppression.
+    return event ~= "CHAT_MSG_LOOT" or GetLootHistoryIDFromText(text) == nil
+end
+
+local function ShouldHideChatEvent(event, text)
+    local result, _, hide = ResolveChatEvent(true, event, text)
+    return hide or result ~= nil
+end
+
+local function SetSyntheticResultHandler(handler)
+    syntheticResultHandler = handler
+end
+
+---@class MiniLootNSReporting
 ns.Reporting = {
     EventHandlers = EventHandlers,
     MessageEvents = MessageEvents,
@@ -379,7 +450,11 @@ ns.Reporting = {
     UnregisterEvents = UnregisterEvents,
     RegisterChatEvents = RegisterChatEvents,
     UnregisterChatEvents = UnregisterChatEvents,
+    RegisterFrameChatEvents = RegisterFrameChatEvents,
+    UnregisterFrameChatEvents = UnregisterFrameChatEvents,
     ProcessChatEvent = ProcessChatEvent,
+    IsChatEventPreviewCacheable = IsChatEventPreviewCacheable,
+    ShouldHideChatEvent = ShouldHideChatEvent,
     EnsureLootRollHook = EnsureLootRollHook,
-    SetSyntheticSelfRollHandler = SetSyntheticSelfRollHandler,
+    SetSyntheticResultHandler = SetSyntheticResultHandler,
 }

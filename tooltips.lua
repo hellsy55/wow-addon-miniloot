@@ -1,8 +1,24 @@
 local ns = select(2, ...) ---@class MiniLootNS
 
 local db = ns.Settings.db
+local ChattynatorUtil = ns.Utils.ChattynatorUtil
+
+local function GetDeathRecapEventsAPI()
+    if C_DeathRecap and type(C_DeathRecap.GetRecapEvents) == "function" then
+        return C_DeathRecap.GetRecapEvents
+    end
+    if type(DeathRecap_GetEvents) == "function" then
+        return DeathRecap_GetEvents
+    end
+end
 
 local function GetSpellInfoCompat(spell)
+    if GetSpellInfo then
+        return GetSpellInfo(spell)
+    end
+    if not C_Spell or not C_Spell.GetSpellInfo then
+        return
+    end
     local info = C_Spell.GetSpellInfo(spell)
     if not info then
         return
@@ -67,7 +83,7 @@ local HandlerTypes = {
 ---@field public Show? MiniLootTooltipHandlerShow
 ---@field public Hide? MiniLootTooltipHandlerHide
 
----@class DeathRecapEventPolyfill
+---@class DeathRecapEventPolyfill : DeathRecapEventInfo
 ---@field public timestamp number 1421121447.489
 ---@field public event string "SWING_DAMAGE"
 ---@field public hideCaster boolean false
@@ -242,7 +258,7 @@ local TooltipHandlers = {
         Type = "DeathRecap",
         Pattern = "^death:",
         IsEnabled = function()
-            return DeathRecap_GetEvents and true
+            return GetDeathRecapEventsAPI() ~= nil
         end,
         Show = function(self, chatFrame, linkData, link)
             ---@type _, string|number?
@@ -251,10 +267,15 @@ local TooltipHandlers = {
             if not id then
                 return
             end
-            local events = DeathRecap_GetEvents(id) ---@type DeathRecapEventPolyfill[]
+            local getEvents = GetDeathRecapEventsAPI()
+            if not getEvents then
+                return
+            end
+            ---@type DeathRecapEventPolyfill[]
+            local events = getEvents(id)
             if not events or not events[1] then
                 AnchorTooltip(GameTooltip, chatFrame)
-				GameTooltip:SetText(DEATH_RECAP_UNAVAILABLE)
+				GameTooltip:SetText(DEATH_RECAP_UNAVAILABLE, 1, 1, 1)
 				GameTooltip:Show()
                 return
             end
@@ -265,7 +286,6 @@ local TooltipHandlers = {
             for i = 1, #events do
                 local evtData = events[i]
                 local spellId, spellName, texture
-                -- DeathRecapFrame_GetEventInfo
                 do
                     spellName = evtData.spellName
                     local nameIsNotSpell = false
@@ -315,7 +335,7 @@ local TooltipHandlers = {
                 end
                 local dmgInfo = evtData.DamageInfo
                 if not dmgInfo then
-                    dmgInfo = {} ---@diagnostic disable-line: missing-fields
+                    dmgInfo = {} ---@diagnostic expect-line: missing-fields
                     evtData.DamageInfo = dmgInfo
                 end
                 if evtData.amount then
@@ -372,7 +392,7 @@ local TooltipHandlers = {
             end
             local text = table.concat(lines, "\n")
             AnchorTooltip(GameTooltip, chatFrame)
-            GameTooltip:SetText(text)
+            GameTooltip:SetText(text, 1, 1, 1)
             GameTooltip:Show()
         end,
     },
@@ -405,10 +425,17 @@ local showingHandler ---@type MiniLootTooltipHandler?
 ---@param link string
 local function OnHyperlinkEnter(chatFrame, linkData, link)
     if showingHandler then
-        showingHandler:Hide()
+        if showingHandler.Hide then
+            showingHandler:Hide()
+        end
         showingHandler = nil
     end
     link, linkData = ns.Links.Unwrap(link, linkData)
+    local chattynatorHandler = ChattynatorUtil:GetChattynatorHandler()
+    if chattynatorHandler and chatFrame == chattynatorHandler then
+        local hoveredChatFrame = ChattynatorUtil:GetHoveredChatFrame(chattynatorHandler)
+        chatFrame = hoveredChatFrame --[[@as MiniLootChatFramePolyfill]] or chatFrame
+    end
     for _, handler in ipairs(TooltipHandlers) do
         if db.EnabledTooltips[handler.Type] ~= false and (not handler.IsEnabled or handler:IsEnabled()) then
             local matched = false

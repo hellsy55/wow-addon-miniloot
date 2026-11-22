@@ -78,9 +78,9 @@ performed. Without a compiler, `--structure-only` explicitly reports a partial
 manifest check; it is not full validation. The real-compiler test is skipped when
 `MINILOOT_TEST_LUAC` is unset. Never interpret that skip as a successful Lua check.
 
-The three manifests must reference existing files with exact capitalization,
-safe relative paths, no duplicates, and identical non-empty load sequences. New
-modules are allowed when added consistently. Interface and Version may differ.
+The shared `MiniLoot.toc` declares the supported interface versions in one
+comma-separated list. Its load sequence must be non-empty and reference existing
+files with exact capitalization, safe relative paths, and no duplicates.
 The known SavedVariables declarations are preserved, including legacy
 `MiniLootDB`; an authorized migration must deliberately update the validator's
 contract and tests. Personal files in `WTF` are never inspected or rewritten.
@@ -101,3 +101,31 @@ not gate or change the separate tag-based release workflow.
 These checks detect syntax and package-structure errors, not correct WoW API use,
 loot behavior, UI behavior, persistence migrations or compatibility with every
 game client. Test relevant behavior in WoW before installing or publishing.
+
+### Quest experience by client build
+
+The addon selects the quest XP source using the exact interface and build
+returned by `GetBuildInfo()`. A verified native build uses chat for quest XP.
+A verified turn-in build uses `QUEST_TURNED_IN` for quest XP and continues to
+process native combat XP. Add a build policy only after collecting an in-game
+event trace for a turn-in that awards XP, including the client build and the
+native events observed.
+
+No exact build currently has that evidence. The manifest declares these
+interfaces, all using native chat plus the turn-in fallback:
+
+| Client family | Interface | Quest XP verification |
+| --- | --- | --- |
+| Classic Era | `11509` | Unverified |
+| WoW Forever | `16001` | Unverified |
+| Burning Crusade Classic | `20506` | Unverified |
+| Wrath Classic | `30405` | Unverified |
+| Cataclysm Classic | `40402` | Unverified |
+| Mists Classic | `50504` | Unverified |
+| Retail | `120100`, `120105`, `120107` | Unverified |
+
+On an unverified build, every XP-awarding turn-in is sent to the normal output
+buffer independently. Native messages are still processed regardless of value,
+order, or delay. If the client also reports that same quest reward in chat, the
+reward can appear or be counted twice. Neither the XP amount nor the delay is
+used to discard a potentially legitimate combat reward.

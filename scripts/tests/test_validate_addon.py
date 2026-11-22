@@ -49,12 +49,19 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(set(sequences), set(validator.MANIFESTS))
         self.assertTrue(sequences[validator.MANIFESTS[0]])
 
-    def test_variants_allow_different_metadata(self):
-        validator.validate_manifests(self.root)
-
     def test_missing_manifest(self):
-        (self.root / validator.MANIFESTS[1]).unlink()
-        self.rejected("MiniLoot_Classic.toc.*missing")
+        (self.root / validator.MANIFESTS[0]).unlink()
+        self.rejected("MiniLoot.toc.*missing")
+
+    def test_single_manifest_interface_list(self):
+        manifest = self.root / validator.MANIFESTS[0]
+        base = manifest.read_text()
+        manifest.write_text(base.replace("## Interface: 1", "## Interface: 11509, 120105"))
+        validator.validate_manifests(self.root)
+        for value in ("", "11509, ", "11509, 11509", "11509, invalid"):
+            with self.subTest(value=value):
+                manifest.write_text(base.replace("## Interface: 1", f"## Interface: {value}"))
+                self.rejected("Interface must declare")
 
     def test_missing_source(self):
         (self.root / "first.lua").unlink()
@@ -83,10 +90,6 @@ class ValidationTests(unittest.TestCase):
     def test_duplicate_entry(self):
         self.write_manifests("first.lua\nfirst.lua\n")
         self.rejected("duplicate")
-
-    def test_order_mismatch(self):
-        (self.root / validator.MANIFESTS[2]).write_text(self.header + "second.lua\nfirst.lua\n")
-        self.rejected("MiniLoot_Vanilla.toc.*load sequence differs")
 
     def test_new_module_is_allowed(self):
         (self.root / "new.lua").write_text(self.source)

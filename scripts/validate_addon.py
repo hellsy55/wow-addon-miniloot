@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-MANIFESTS = ("MiniLoot.toc", "MiniLoot_Classic.toc", "MiniLoot_Vanilla.toc")
+MANIFESTS = ("MiniLoot.toc",)
 # Change this contract only as part of an explicitly reviewed persistence migration.
 SAVED_VARIABLES = {"MiniLootDB", "MiniLootDB2", "MiniLootRemixDB2"}
 
@@ -44,7 +44,7 @@ def validate_manifests(root):
     for name in MANIFESTS:
         try:
             exact_file(root, name)
-            files, saved = [], []
+            files, saved, interfaces = [], [], []
             for line_number, line in enumerate((root / name).read_text(encoding="utf-8-sig").splitlines(), 1):
                 line = line.strip()
                 if not line:
@@ -53,6 +53,9 @@ def validate_manifests(root):
                     match = re.fullmatch(r"##\s*SavedVariables\s*:\s*(.*)", line, re.IGNORECASE)
                     if match:
                         saved.append([value.strip() for value in match[1].split(",")])
+                    match = re.fullmatch(r"##\s*Interface\s*:\s*(.*)", line, re.IGNORECASE)
+                    if match:
+                        interfaces.append([value.strip() for value in match[1].split(",")])
                     continue
                 try:
                     entry = exact_file(root, line)
@@ -65,13 +68,12 @@ def validate_manifests(root):
                 raise ValidationError(f"SavedVariables must declare exactly {', '.join(sorted(SAVED_VARIABLES))}")
             if not files:
                 raise ValidationError("empty load sequence")
+            if (len(interfaces) != 1 or any(not re.fullmatch(r"[1-9][0-9]*", value) for value in interfaces[0])
+                    or len(interfaces[0]) != len(set(interfaces[0]))):
+                raise ValidationError("Interface must declare one list of unique positive version numbers")
             sequences[name] = files
         except (OSError, UnicodeError, ValidationError) as error:
             raise ValidationError(f"{name}: {error}") from None
-    baseline = sequences[MANIFESTS[0]]
-    for name, files in sequences.items():
-        if files != baseline:
-            raise ValidationError(f"{name}: load sequence differs from {MANIFESTS[0]}: {files!r} != {baseline!r}")
     return sequences
 
 
